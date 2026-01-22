@@ -122,14 +122,18 @@ struct TrainingParameters: Codable {
     var earlyStopping: Bool
     var patience: Int
     
+    // Threshold ESR for early stopping (0.01 = 1% error, excellent quality)
+    var thresholdESR: Double?
+    
     init(
         architecture: ModelArchitecture = .wavenet,
-        epochs: Int = 100,
+        epochs: Int = 50,  // Reduced from 100 - early stopping will kick in if quality is good
         learningRate: Double = 0.004,
         batchSize: Int = 16,
         validationSplit: Double = 0.1,
         earlyStopping: Bool = true,
-        patience: Int = 20
+        patience: Int = 20,
+        thresholdESR: Double? = 0.02  // Stop early if ESR < 2%
     ) {
         self.architecture = architecture
         self.epochs = epochs
@@ -138,18 +142,21 @@ struct TrainingParameters: Codable {
         self.validationSplit = validationSplit
         self.earlyStopping = earlyStopping
         self.patience = patience
+        self.thresholdESR = thresholdESR
     }
     
     static let `default` = TrainingParameters()
     
     static let quick = TrainingParameters(
         epochs: 25,
-        patience: 10
+        patience: 10,
+        thresholdESR: 0.05  // 5% - good enough for quick test
     )
     
     static let full = TrainingParameters(
         epochs: 250,
-        patience: 50
+        patience: 50,
+        thresholdESR: 0.01  // 1% - highest quality
     )
 }
 

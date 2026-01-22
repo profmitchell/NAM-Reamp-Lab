@@ -341,11 +341,11 @@ class NAMTrainer: ObservableObject {
                     let trainer = self
                     let jobCopy = job
                     
-                    // Async read handlers
+                    // Async read handlers - only print errors, not progress spam
                     outputPipe.fileHandleForReading.readabilityHandler = { handle in
                         let data = handle.availableData
                         guard !data.isEmpty, let output = String(data: data, encoding: .utf8) else { return }
-                        print(output, terminator: "")  // Echo to console
+                        // Only parse, don't echo to console
                         DispatchQueue.main.async {
                             trainer.parseTrainingOutput(output, for: jobCopy)
                         }
@@ -354,7 +354,10 @@ class NAMTrainer: ObservableObject {
                     errorPipe.fileHandleForReading.readabilityHandler = { handle in
                         let data = handle.availableData
                         guard !data.isEmpty, let output = String(data: data, encoding: .utf8) else { return }
-                        print(output, terminator: "")  // Echo to console
+                        // Only print actual errors, not warnings
+                        if output.contains("Error") || output.contains("error:") || output.contains("failed") {
+                            print("❌ \(output)")
+                        }
                         DispatchQueue.main.async {
                             trainer.parseTrainingOutput(output, for: jobCopy)
                         }
@@ -394,37 +397,45 @@ class NAMTrainer: ObservableObject {
         }
     }
     
+    // Throttle log updates to reduce UI spam
+    private var lastLogUpdate = Date.distantPast
+    private let logUpdateInterval: TimeInterval = 2.0  // Update UI at most every 2 seconds
+    
     private func parseTrainingOutput(_ output: String, for job: TrainingJob) {
-        outputBuffer += output
-        
         guard let index = jobs.firstIndex(where: { $0.id == job.id }) else { return }
         
-        jobs[index].logOutput += output
+        // Always accumulate raw output (for debugging if needed)
+        outputBuffer += output
         
-        // Parse epoch progress
-        // Example: "Epoch 45/100"
-        let epochPattern = #"Epoch\s+(\d+)/(\d+)"#
+        // Parse epoch progress - always update progress bar
+        let epochPattern = #"Epoch\s+(\d+)"#
         if let regex = try? NSRegularExpression(pattern: epochPattern),
            let match = regex.firstMatch(in: output, range: NSRange(output.startIndex..., in: output)) {
             if let currentRange = Range(match.range(at: 1), in: output),
-               let totalRange = Range(match.range(at: 2), in: output),
-               let current = Int(output[currentRange]),
-               let total = Int(output[totalRange]) {
+               let current = Int(output[currentRange]) {
                 jobs[index].currentEpoch = current
-                jobs[index].totalEpochs = total
-                jobs[index].progress = Double(current) / Double(total)
+                jobs[index].progress = Double(current) / Double(jobs[index].totalEpochs)
             }
         }
         
-        // Parse loss
-        // Example: "loss: 0.0023" or "val_loss: 0.0019"
-        let lossPattern = #"(?:val_)?loss:\s*([\d.]+)"#
-        if let regex = try? NSRegularExpression(pattern: lossPattern),
+        // Parse ESR (Error-to-Signal Ratio) - key quality metric
+        let esrPattern = #"ESR[=:\s]*([\d.]+)"#
+        if let regex = try? NSRegularExpression(pattern: esrPattern, options: .caseInsensitive),
            let match = regex.firstMatch(in: output, range: NSRange(output.startIndex..., in: output)) {
-            if let lossRange = Range(match.range(at: 1), in: output),
-               let loss = Double(output[lossRange]) {
-                jobs[index].currentLoss = loss
+            if let esrRange = Range(match.range(at: 1), in: output),
+               let esr = Double(output[esrRange]) {
+                jobs[index].currentLoss = esr
             }
+        }
+        
+        // Minimal UI log - only show status, not spam
+        let now = Date()
+        if now.timeIntervalSince(lastLogUpdate) >= logUpdateInterval {
+            lastLogUpdate = now
+            let epoch = jobs[index].currentEpoch
+            let total = jobs[index].totalEpochs
+            let esr = jobs[index].currentLoss.map { String(format: "%.4f", $0) } ?? "..."
+            jobs[index].logOutput = "Training: Epoch \(epoch)/\(total) • ESR: \(esr)"
         }
     }
 }
