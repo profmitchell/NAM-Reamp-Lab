@@ -73,20 +73,24 @@ struct ChainBuilderView: View {
         } message: {
             Text(processingError ?? "Unknown error")
         }
-        .onChange(of: chainManager.selectedChain) { _, newChain in
-            // Load chain into audio engine when selected
-            // Defer to avoid "publishing changes during view updates" warning
-            if let chain = newChain {
-                Task {
-                    // Small delay to avoid publishing during view updates
-                    try? await Task.sleep(for: .milliseconds(50))
-                    do {
-                        try await audioEngine.loadChain(chain)
-                    } catch {
-                        await MainActor.run {
-                            processingError = error.localizedDescription
-                            showingError = true
-                        }
+        .onChange(of: chainManager.selectedChainId) { oldId, newId in
+            // Load chain into audio engine when selection changes
+            // Only reload if the ID actually changed (not just the chain content)
+            guard oldId != newId, let newId = newId else { return }
+            guard let chain = chainManager.chains.first(where: { $0.id == newId }) else { return }
+            
+            // Don't reload during processing
+            guard !chainManager.isProcessing else { return }
+            
+            Task {
+                // Small delay to avoid publishing during view updates
+                try? await Task.sleep(for: .milliseconds(50))
+                do {
+                    try await audioEngine.loadChain(chain)
+                } catch {
+                    await MainActor.run {
+                        processingError = error.localizedDescription
+                        showingError = true
                     }
                 }
             }
@@ -376,30 +380,19 @@ struct ChainBuilderView: View {
                 }
             }
             
-            // Main action buttons
-            HStack(spacing: 12) {
-                Button {
-                    Task {
-                        await processAllChains()
-                    }
-                } label: {
-                    Label("Process Chains", systemImage: "waveform.path.ecg")
+            // Main action button - process chains and train models
+            Button {
+                Task {
+                    await processAndSendToTraining()
                 }
-                .buttonStyle(.bordered)
-                .disabled(chainManager.inputFileURL == nil || chainManager.enabledChains.isEmpty || chainManager.isProcessing)
-                .help("Process DI through all enabled chains to generate training output files")
-                
-                Button {
-                    Task {
-                        await processAndSendToTraining()
-                    }
-                } label: {
-                    Label("Process & Train", systemImage: "brain")
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(chainManager.inputFileURL == nil || chainManager.enabledChains.isEmpty || chainManager.isProcessing)
-                .help("Process all chains and create training jobs for each output")
+            } label: {
+                Label("Process & Train", systemImage: "brain")
+                    .frame(minWidth: 130)
             }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.large)
+            .disabled(chainManager.inputFileURL == nil || chainManager.enabledChains.isEmpty || chainManager.isProcessing)
+            .help("Process audio through all enabled chains and train NAM models for each")
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)

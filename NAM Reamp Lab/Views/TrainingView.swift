@@ -20,6 +20,8 @@ struct TrainingView: View {
     @State private var selectedJobIds: Set<UUID> = []
     @State private var trainingError: String?
     @State private var showingError = false
+    @State private var showingCompletionDialog = false
+    @State private var completedJob: TrainingJob?
     
     var body: some View {
         HSplitView {
@@ -50,6 +52,21 @@ struct TrainingView: View {
             Button("OK") { }
         } message: {
             Text(trainingError ?? "Unknown error")
+        }
+        .sheet(isPresented: $showingCompletionDialog) {
+            if let job = completedJob {
+                TrainingCompletionSheet(job: job) {
+                    showingCompletionDialog = false
+                    completedJob = nil
+                    trainer.lastCompletedJob = nil
+                }
+            }
+        }
+        .onChange(of: trainer.lastCompletedJob) { oldValue, newValue in
+            if let job = newValue {
+                completedJob = job
+                showingCompletionDialog = true
+            }
         }
         .task {
             // Initialize Python on view appear
@@ -389,11 +406,16 @@ struct TrainingJobRowView: View {
                 }
             }
             
-            if let loss = job.currentLoss {
-                Text("Loss: \(String(format: "%.4f", loss))")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                    .monospacedDigit()
+            if let esr = job.currentLoss {
+                HStack(spacing: 4) {
+                    Text("ESR:")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    Text(String(format: "%.4f", esr))
+                        .font(.caption.bold())
+                        .foregroundColor(esrColor(esr))
+                        .monospacedDigit()
+                }
             }
         }
         .padding(.vertical, 4)
@@ -430,6 +452,15 @@ struct TrainingJobRowView: View {
         case .failed: return .red
         case .cancelled: return .orange
         }
+    }
+    
+    /// Returns color based on ESR value (lower is better)
+    private func esrColor(_ esr: Double) -> Color {
+        if esr < 0.01 { return .green }       // Excellent: < 1%
+        if esr < 0.02 { return .mint }        // Great: 1-2%
+        if esr < 0.05 { return .blue }        // Good: 2-5%
+        if esr < 0.10 { return .orange }      // Fair: 5-10%
+        return .red                            // Poor: > 10%
     }
 }
 
@@ -518,7 +549,7 @@ struct TrainingJobDetailView: View {
         ], spacing: 16) {
             StatView(title: "Epoch", value: "\(job.currentEpoch)/\(job.totalEpochs)")
             StatView(title: "Progress", value: "\(Int(job.progress * 100))%")
-            StatView(title: "Loss", value: job.currentLoss.map { String(format: "%.4f", $0) } ?? "-")
+            ESRStatView(title: "ESR", value: job.currentLoss)
             StatView(title: "Duration", value: job.formattedDuration ?? "-")
         }
         .padding()
@@ -587,6 +618,64 @@ struct StatView: View {
         .padding(.vertical, 8)
         .background(Color(NSColor.controlBackgroundColor))
         .cornerRadius(8)
+    }
+}
+
+// MARK: - ESR Stat View (with color coding)
+
+struct ESRStatView: View {
+    let title: String
+    let value: Double?
+    
+    var body: some View {
+        VStack(spacing: 4) {
+            if let esr = value {
+                Text(String(format: "%.4f", esr))
+                    .font(.title3)
+                    .fontWeight(.semibold)
+                    .foregroundColor(esrColor(esr))
+                    .monospacedDigit()
+            } else {
+                Text("-")
+                    .font(.title3)
+                    .fontWeight(.semibold)
+                    .foregroundColor(.secondary)
+            }
+            
+            HStack(spacing: 4) {
+                Text(title)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                
+                if let esr = value {
+                    Text("(\(esrQuality(esr)))")
+                        .font(.caption)
+                        .foregroundColor(esrColor(esr))
+                }
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 8)
+        .background(Color(NSColor.controlBackgroundColor))
+        .cornerRadius(8)
+    }
+    
+    /// Returns color based on ESR value (lower is better)
+    private func esrColor(_ esr: Double) -> Color {
+        if esr < 0.01 { return .green }       // Excellent: < 1%
+        if esr < 0.02 { return .mint }        // Great: 1-2%
+        if esr < 0.05 { return .blue }        // Good: 2-5%
+        if esr < 0.10 { return .orange }      // Fair: 5-10%
+        return .red                            // Poor: > 10%
+    }
+    
+    /// Returns quality description based on ESR
+    private func esrQuality(_ esr: Double) -> String {
+        if esr < 0.01 { return "Excellent" }
+        if esr < 0.02 { return "Great" }
+        if esr < 0.05 { return "Good" }
+        if esr < 0.10 { return "Fair" }
+        return "Training..."
     }
 }
 
@@ -716,4 +805,139 @@ struct TrainingParametersSheet: View {
 
 #Preview {
     TrainingView()
+}
+
+// MARK: - Training Completion Sheet
+
+struct TrainingCompletionSheet: View {
+    let job: TrainingJob
+    let onDismiss: () -> Void
+    
+    @State private var newModelName: String = ""
+    @State private var hasRenamed = false
+    
+    var modelFileName: String {
+        guard let path = job.modelOutputPath else { return "model.nam" }
+        return URL(fileURLWithPath: path).lastPathComponent
+    }
+    
+    var modelFolder: String {
+        guard let path = job.modelOutputPath else { return "" }
+        return URL(fileURLWithPath: path).deletingLastPathComponent().path
+    }
+    
+    var body: some View {
+        VStack(spacing: 20) {
+            // Success icon
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: 64))
+                .foregroundColor(.green)
+            
+            Text("Training Complete!")
+                .font(.title)
+                .fontWeight(.bold)
+            
+            if let chainName = job.chainName {
+                Text("Model trained for: \(chainName)")
+                    .foregroundColor(.secondary)
+            }
+            
+            // Model path info
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Model saved to:")
+                    .font(.headline)
+                
+                if let path = job.modelOutputPath {
+                    Text(path)
+                        .font(.system(.caption, design: .monospaced))
+                        .foregroundColor(.secondary)
+                        .textSelection(.enabled)
+                        .padding(8)
+                        .background(Color(NSColor.textBackgroundColor))
+                        .cornerRadius(6)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding()
+            .background(Color(NSColor.controlBackgroundColor))
+            .cornerRadius(8)
+            
+            // Rename section
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Rename Model (optional)")
+                    .font(.headline)
+                
+                HStack {
+                    TextField("New name", text: $newModelName)
+                        .textFieldStyle(.roundedBorder)
+                    
+                    Text(".nam")
+                        .foregroundColor(.secondary)
+                    
+                    Button("Rename") {
+                        renameModel()
+                    }
+                    .disabled(newModelName.isEmpty || hasRenamed)
+                }
+                
+                if hasRenamed {
+                    Label("Model renamed successfully!", systemImage: "checkmark")
+                        .foregroundColor(.green)
+                        .font(.caption)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding()
+            .background(Color(NSColor.controlBackgroundColor))
+            .cornerRadius(8)
+            
+            Spacer()
+            
+            // Actions
+            HStack(spacing: 16) {
+                Button {
+                    onDismiss()
+                } label: {
+                    Text("Close")
+                        .frame(width: 100)
+                }
+                .buttonStyle(.bordered)
+                
+                Button {
+                    openInFinder()
+                } label: {
+                    Label("Show in Finder", systemImage: "folder")
+                        .frame(width: 150)
+                }
+                .buttonStyle(.borderedProminent)
+            }
+        }
+        .padding(30)
+        .frame(width: 500, height: 450)
+        .onAppear {
+            // Suggest a name based on chain name
+            if let chainName = job.chainName {
+                newModelName = chainName.replacingOccurrences(of: " ", with: "_")
+            }
+        }
+    }
+    
+    private func openInFinder() {
+        guard let path = job.modelOutputPath else { return }
+        NSWorkspace.shared.selectFile(path, inFileViewerRootedAtPath: "")
+    }
+    
+    private func renameModel() {
+        guard let oldPath = job.modelOutputPath, !newModelName.isEmpty else { return }
+        
+        let oldURL = URL(fileURLWithPath: oldPath)
+        let newURL = oldURL.deletingLastPathComponent().appendingPathComponent("\(newModelName).nam")
+        
+        do {
+            try FileManager.default.moveItem(at: oldURL, to: newURL)
+            hasRenamed = true
+        } catch {
+            print("Failed to rename model: \(error)")
+        }
+    }
 }

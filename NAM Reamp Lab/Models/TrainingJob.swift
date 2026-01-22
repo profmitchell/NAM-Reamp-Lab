@@ -37,7 +37,7 @@ enum TrainingStatus: String, Codable {
 }
 
 /// Represents a single NAM model training job
-struct TrainingJob: Identifiable, Codable {
+struct TrainingJob: Identifiable, Codable, Equatable {
     let id: UUID
     var inputFilePath: String
     var outputFilePath: String

@@ -86,6 +86,7 @@ class AudioEngine: ObservableObject {
     // Real level metering
     private var inputLevelRMS: Float = 0.0
     private var outputLevelRMS: Float = 0.0
+    private var lastLevelUpdateTime: CFAbsoluteTime = 0
     private let levelSmoothingFactor: Float = 0.3  // Lower = smoother
     
     // MARK: - Initialization
@@ -939,6 +940,16 @@ class AudioEngine: ObservableObject {
         inputNode.installTap(onBus: 0, bufferSize: 1024, format: inputFormat) { [weak self] buffer, _ in
             guard let self = self else { return }
             let level = self.calculateRMSLevel(buffer: buffer)
+            
+            // Throttle UI updates to avoid rate-limit spam (max ~20Hz)
+            let now = CFAbsoluteTimeGetCurrent()
+            guard now - self.lastLevelUpdateTime > 0.05 else { 
+                // Still update RMS for smoothing, just don't publish
+                self.inputLevelRMS = self.inputLevelRMS * (1 - self.levelSmoothingFactor) + level * self.levelSmoothingFactor
+                return 
+            }
+            self.lastLevelUpdateTime = now
+            
             Task { @MainActor [weak self] in
                 guard let self = self else { return }
                 self.inputLevelRMS = self.inputLevelRMS * (1 - self.levelSmoothingFactor) + level * self.levelSmoothingFactor
@@ -951,9 +962,15 @@ class AudioEngine: ObservableObject {
             mixer.installTap(onBus: 0, bufferSize: 1024, format: outputFormat) { [weak self] buffer, _ in
                 guard let self = self else { return }
                 let level = self.calculateRMSLevel(buffer: buffer)
+                
+                // Throttle - use same lastLevelUpdateTime as input (they're synced)
+                let now = CFAbsoluteTimeGetCurrent()
+                guard now - self.lastLevelUpdateTime < 0.1 else { return } // Only update if input just updated
+                
+                self.outputLevelRMS = self.outputLevelRMS * (1 - self.levelSmoothingFactor) + level * self.levelSmoothingFactor
+                
                 Task { @MainActor [weak self] in
                     guard let self = self else { return }
-                    self.outputLevelRMS = self.outputLevelRMS * (1 - self.levelSmoothingFactor) + level * self.levelSmoothingFactor
                     self.outputLevel = self.outputLevelRMS
                 }
             }

@@ -284,9 +284,13 @@ class AudioUnitHostManager: ObservableObject {
                 currentBuffer = try await processWithNAMModel(currentBuffer, modelPath: plugin.path ?? "")
                 
             case .audioUnit:
-                // Process with loaded Audio Unit
+                // Process with loaded Audio Unit - MUST restore presetData for proper sound
                 if let auDesc = plugin.componentDescription {
-                    currentBuffer = try await processWithAudioUnit(currentBuffer, description: auDesc.toAudioComponentDescription())
+                    currentBuffer = try await processWithAudioUnit(
+                        currentBuffer,
+                        description: auDesc.toAudioComponentDescription(),
+                        presetData: plugin.presetData
+                    )
                 } else {
                     print("     ⚠️ No component description for plugin \(plugin.name)")
                 }
@@ -409,10 +413,12 @@ class AudioUnitHostManager: ObservableObject {
         return namComponent
     }
     
-    private func processWithAudioUnit(_ buffer: AVAudioPCMBuffer, description: AudioComponentDescription) async throws -> AVAudioPCMBuffer {
-        // Load the AU - use .loadOutOfProcess for third-party plugins
-        let isAppleAU = description.componentManufacturer == kAudioUnitManufacturer_Apple
-        let options: AudioComponentInstantiationOptions = isAppleAU ? [] : .loadOutOfProcess
+    private func processWithAudioUnit(_ buffer: AVAudioPCMBuffer, description: AudioComponentDescription, presetData: Data?) async throws -> AVAudioPCMBuffer {
+        // IMPORTANT: For offline rendering, we MUST use in-process loading
+        // Out-of-process AUs crash with error 4099 during offline rendering
+        let options: AudioComponentInstantiationOptions = []
+        
+        print("     Loading AU in-process for offline rendering...")
         
         let audioUnit = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<AVAudioUnit, Error>) in
             AVAudioUnit.instantiate(with: description, options: options) { unit, error in
@@ -426,6 +432,27 @@ class AudioUnitHostManager: ObservableObject {
             }
         }
         
+        // CRITICAL: Restore plugin state (preset) before processing!
+        if let presetData = presetData {
+            do {
+                if let state = try NSKeyedUnarchiver.unarchivedObject(ofClasses: [NSDictionary.self, NSArray.self, NSString.self, NSNumber.self, NSData.self], from: presetData) as? [String: Any] {
+                    audioUnit.auAudioUnit.fullState = state
+                    print("     ✓ Restored plugin state from preset data")
+                }
+            } catch {
+                print("     ⚠️ Failed to restore preset: \(error.localizedDescription)")
+            }
+        } else {
+            print("     ⚠️ No preset data - using default plugin settings!")
+        }
+        
+        // Process in chunks like a DAW does when bouncing
+        // NAM and other plugins have internal buffer limits
+        let chunkSize: AVAudioFrameCount = 4096
+        let totalFrames = buffer.frameLength
+        
+        print("     Processing \(totalFrames) frames in chunks of \(chunkSize)...")
+        
         // Create offline render engine
         let engine = AVAudioEngine()
         let player = AVAudioPlayerNode()
@@ -436,24 +463,69 @@ class AudioUnitHostManager: ObservableObject {
         engine.connect(player, to: audioUnit, format: buffer.format)
         engine.connect(audioUnit, to: engine.mainMixerNode, format: buffer.format)
         
-        // Set up offline manual rendering
-        try engine.enableManualRenderingMode(.offline, format: buffer.format, maximumFrameCount: buffer.frameLength)
+        // Enable manual rendering with chunk-sized maximum
+        try engine.enableManualRenderingMode(.offline, format: buffer.format, maximumFrameCount: chunkSize)
         try engine.start()
         player.play()
-        // Use scheduleBuffer for playback
+        
+        // Schedule the entire buffer - the player will feed it chunk by chunk
         player.scheduleBuffer(buffer, completionHandler: nil)
         
-        // Render output
-        guard let outputBuffer = AVAudioPCMBuffer(pcmFormat: buffer.format, frameCapacity: buffer.frameLength) else {
+        // Create output buffer for the full file
+        guard let outputBuffer = AVAudioPCMBuffer(pcmFormat: buffer.format, frameCapacity: totalFrames) else {
             throw AudioUnitError.bufferCreationFailed
         }
         
-        let status = try engine.renderOffline(buffer.frameLength, to: outputBuffer)
-        guard status == .success else {
-            throw AudioUnitError.renderFailed
+        // Create a temporary chunk buffer for rendering
+        guard let chunkBuffer = AVAudioPCMBuffer(pcmFormat: buffer.format, frameCapacity: chunkSize) else {
+            throw AudioUnitError.bufferCreationFailed
         }
         
+        var framesRendered: AVAudioFrameCount = 0
+        var lastProgressPrint: Double = 0
+        
+        // Render in chunks
+        while framesRendered < totalFrames {
+            let framesToRender = min(chunkSize, totalFrames - framesRendered)
+            
+            let status = try engine.renderOffline(framesToRender, to: chunkBuffer)
+            
+            if status == .success {
+                // Copy chunk to output buffer
+                if let outputData = outputBuffer.floatChannelData,
+                   let chunkData = chunkBuffer.floatChannelData {
+                    let channelCount = Int(buffer.format.channelCount)
+                    for channel in 0..<channelCount {
+                        let destOffset = Int(framesRendered)
+                        memcpy(outputData[channel].advanced(by: destOffset),
+                               chunkData[channel],
+                               Int(chunkBuffer.frameLength) * MemoryLayout<Float>.size)
+                    }
+                }
+                framesRendered += chunkBuffer.frameLength
+            } else if status == .insufficientDataFromInputNode {
+                // No more data from player - we're done
+                break
+            } else if status == .cannotDoInCurrentContext {
+                // Try again
+                try await Task.sleep(for: .milliseconds(1))
+                continue
+            } else {
+                throw AudioUnitError.renderFailed
+            }
+            
+            // Progress logging (every 10%)
+            let progress = Double(framesRendered) / Double(totalFrames)
+            if progress - lastProgressPrint >= 0.1 {
+                print("     Progress: \(Int(progress * 100))%")
+                lastProgressPrint = progress
+            }
+        }
+        
+        outputBuffer.frameLength = framesRendered
         engine.stop()
+        
+        print("     ✓ Rendered \(framesRendered) frames")
         return outputBuffer
     }
     

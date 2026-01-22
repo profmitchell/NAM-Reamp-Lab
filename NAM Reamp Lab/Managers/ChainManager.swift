@@ -192,6 +192,11 @@ class ChainManager: ObservableObject {
             throw ChainError.noChainsEnabled
         }
         
+        // CRITICAL: Capture current plugin states BEFORE processing
+        // This ensures we use the exact settings the user has configured
+        captureCurrentChainState()
+        saveChains()
+        
         print("📼 ChainManager: Starting offline processing...")
         print("   Input file: \(inputURL.path)")
         print("   Output folder: \(outputFolder.path)")
@@ -212,6 +217,15 @@ class ChainManager: ObservableObject {
             currentProcessingChain = chain.name
             print("🔊 Processing chain \(index + 1)/\(totalChains): \(chain.name)")
             print("   Plugins: \(chain.plugins.map { $0.name }.joined(separator: " → "))")
+            
+            // Debug: Check if plugins have saved state
+            for plugin in chain.plugins where plugin.type == .audioUnit {
+                if plugin.presetData != nil {
+                    print("   ✓ Plugin '\(plugin.name)' has saved preset data")
+                } else {
+                    print("   ⚠️ Plugin '\(plugin.name)' has NO preset data - will use default settings!")
+                }
+            }
             
             let outputURL = outputFolder.appendingPathComponent(chain.outputFileName)
             print("   Output: \(outputURL.lastPathComponent)")
@@ -267,9 +281,24 @@ class ChainManager: ObservableObject {
     // MARK: - Persistence
     
     /// Saves chains to disk, capturing current plugin states
-    func saveChains() {
+    /// Set skipCapture to true when states are already up to date (e.g., during processing)
+    func saveChains(skipCapture: Bool = false) {
+        // Skip during training to avoid AU reload spam
+        guard !NAMTrainer.shared.isTraining else {
+            // Just save without capturing during training
+            do {
+                let data = try JSONEncoder().encode(chains)
+                try data.write(to: chainsFileURL)
+            } catch {
+                print("Failed to save chains: \(error)")
+            }
+            return
+        }
+        
         // Capture current plugin states from the audio engine before saving
-        captureCurrentChainState()
+        if !skipCapture {
+            captureCurrentChainState()
+        }
         
         do {
             let data = try JSONEncoder().encode(chains)
@@ -332,12 +361,18 @@ class ChainManager: ObservableObject {
     // MARK: - Private Methods
     
     private func setupAutoSave() {
-        // Auto-save when chains change
+        // Auto-save when chains change (but not during training or processing)
         $chains
-            .debounce(for: .seconds(1), scheduler: DispatchQueue.main)
+            .debounce(for: .seconds(2), scheduler: DispatchQueue.main)
             .sink { [weak self] _ in
+                guard let self = self else { return }
+                
+                // Skip auto-save during training or processing to prevent AU reloading spam
+                guard !NAMTrainer.shared.isTraining else { return }
+                guard !self.isProcessing else { return }
+                
                 if AppSettings.shared.autoSaveChains {
-                    self?.saveChains()
+                    self.saveChains()
                 }
             }
             .store(in: &cancellables)

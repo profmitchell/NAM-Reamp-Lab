@@ -24,6 +24,9 @@ class NAMTrainer: ObservableObject {
     // Queue management
     @Published var queuedJobIds: [UUID] = []
     
+    /// Last completed job - used to show completion dialog
+    @Published var lastCompletedJob: TrainingJob?
+    
     // MARK: - Private Properties
     
     private let pythonManager = PythonManager.shared
@@ -116,6 +119,9 @@ class NAMTrainer: ObservableObject {
                 jobs[index].progress = 1.0
                 jobs[index].completedAt = Date()
                 jobs[index].modelOutputPath = modelOutputPath
+                
+                // Set lastCompletedJob to trigger completion dialog
+                lastCompletedJob = jobs[index]
             }
         } catch {
             // Update job on failure
