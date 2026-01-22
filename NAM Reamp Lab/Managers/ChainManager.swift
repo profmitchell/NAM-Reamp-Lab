@@ -83,16 +83,31 @@ class ChainManager: ObservableObject {
         return chain
     }
     
-    /// Duplicates an existing chain
+    /// Duplicates an existing chain with full deep copy of plugins including preset data
     @discardableResult
     func duplicateChain(_ chain: ProcessingChain) -> ProcessingChain {
+        // Deep copy plugins to ensure preset data is copied
+        let copiedPlugins = chain.plugins.map { plugin -> AudioPlugin in
+            AudioPlugin(
+                id: UUID(),  // New ID for the copy
+                name: plugin.name,
+                type: plugin.type,
+                path: plugin.path,
+                componentDescription: plugin.componentDescription,
+                presetData: plugin.presetData,  // CRITICAL: Copy preset data!
+                isEnabled: plugin.isEnabled,
+                isBypassed: plugin.isBypassed
+            )
+        }
+        
         let newChain = ProcessingChain(
             name: "\(chain.name) Copy",
             isEnabled: chain.isEnabled,
-            plugins: chain.plugins
+            plugins: copiedPlugins
         )
         chains.append(newChain)
         selectedChainId = newChain.id
+        print("✅ Duplicated chain '\(chain.name)' with \(copiedPlugins.count) plugins (including preset data)")
         return newChain
     }
     

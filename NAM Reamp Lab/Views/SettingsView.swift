@@ -271,15 +271,6 @@ struct SettingsView: View {
                     .foregroundColor(.secondary)
             }
             
-            if let lastScan = audioUnitManager.lastScanDate {
-                HStack {
-                    Text("Last Scanned")
-                    Spacer()
-                    Text(lastScan, style: .relative)
-                        .foregroundColor(.secondary)
-                }
-            }
-            
             Button {
                 Task {
                     await audioUnitManager.scanForAudioUnits()

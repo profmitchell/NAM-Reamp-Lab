@@ -24,6 +24,8 @@ struct ChainBuilderView: View {
     @State private var selectedPluginIndex: Int?
     @State private var processingError: String?
     @State private var showingError = false
+    @State private var showingModelNamingSheet = false
+    @State private var modelNames: [UUID: String] = [:]  // Chain ID -> Model name
     
     var body: some View {
         VStack(spacing: 0) {
@@ -72,6 +74,21 @@ struct ChainBuilderView: View {
             Button("OK") { }
         } message: {
             Text(processingError ?? "Unknown error")
+        }
+        .sheet(isPresented: $showingModelNamingSheet) {
+            ModelNamingSheet(
+                chains: chainManager.enabledChains,
+                modelNames: $modelNames,
+                onConfirm: {
+                    showingModelNamingSheet = false
+                    Task {
+                        await executeProcessAndTrain()
+                    }
+                },
+                onCancel: {
+                    showingModelNamingSheet = false
+                }
+            )
         }
         .onChange(of: chainManager.selectedChainId) { oldId, newId in
             // Load chain into audio engine when selection changes
@@ -387,9 +404,15 @@ struct ChainBuilderView: View {
             
             // Main action button - process chains and train models
             Button {
-                Task {
-                    await processAndSendToTraining()
-                }
+                // Initialize model names with chain names (skip defaults)
+                modelNames = Dictionary(uniqueKeysWithValues: 
+                    chainManager.enabledChains.map { chain in
+                        let isDefaultName = chain.name.hasPrefix("New Chain") && 
+                                          (chain.name == "New Chain" || chain.name.hasSuffix(" Copy"))
+                        return (chain.id, isDefaultName ? "" : chain.name)
+                    }
+                )
+                showingModelNamingSheet = true
             } label: {
                 Label("Process & Train", systemImage: "brain")
                     .frame(minWidth: 130)
@@ -486,7 +509,7 @@ struct ChainBuilderView: View {
         }
     }
     
-    private func processAndSendToTraining() async {
+    private func executeProcessAndTrain() async {
         let outputFolder = URL(fileURLWithPath: AppSettings.shared.defaultOutputFolder)
         
         // Create output folder if it doesn't exist
@@ -497,7 +520,7 @@ struct ChainBuilderView: View {
         print("   Output folder: \(outputFolder.path)")
         print("   Enabled chains: \(chainManager.enabledChains.count)")
         for chain in chainManager.enabledChains {
-            print("   - \(chain.name): \(chain.plugins.count) plugins")
+            print("   - \(chain.name): \(chain.plugins.count) plugins -> Model: \(modelNames[chain.id] ?? chain.name)")
         }
         
         do {
@@ -516,7 +539,7 @@ struct ChainBuilderView: View {
                 print("   - \(url.lastPathComponent)")
             }
             
-            // Create training jobs for each output
+            // Create training jobs for each output with custom names
             let trainer = NAMTrainer.shared
             guard let inputURL = chainManager.inputFileURL else {
                 print("❌ No input file URL!")
@@ -525,13 +548,19 @@ struct ChainBuilderView: View {
             
             print("🧠 Creating training jobs...")
             for (index, outputURL) in outputURLs.enumerated() {
-                let chainName = chainManager.enabledChains[safe: index]?.name ?? "Chain \(index + 1)"
+                let chain = chainManager.enabledChains[safe: index]
+                let chainName = chain?.name ?? "Chain \(index + 1)"
+                let modelName = chain.flatMap { modelNames[$0.id] } ?? chainName
+                
                 print("   Creating job: \(chainName)")
                 print("     Input (DI): \(inputURL.path)")
                 print("     Output (Reamped): \(outputURL.path)")
+                print("     Model name: \(modelName)")
+                
                 trainer.createJob(
                     inputFilePath: inputURL.path,
                     outputFilePath: outputURL.path,
+                    modelName: modelName,
                     chainName: chainName
                 )
             }
@@ -685,6 +714,7 @@ struct PluginRowView: View {
     var onShowUI: (() -> Void)? = nil
     
     @StateObject private var audioEngine = AudioEngine.shared
+    @State private var showingPluginUI = false
     
     var body: some View {
         HStack(spacing: 12) {
@@ -756,6 +786,13 @@ struct PluginRowView: View {
         }
         .padding(.vertical, 4)
         .opacity(plugin.isEnabled && !plugin.isBypassed ? 1.0 : 0.6)
+        .contentShape(Rectangle())  // Make entire row tappable
+        .onTapGesture(count: 2) {
+            // Double-click anywhere on row to open UI
+            if plugin.type == .audioUnit || plugin.type == .nam {
+                showPluginUI()
+            }
+        }
     }
     
     private var iconColor: Color {
@@ -1024,6 +1061,91 @@ struct AddPluginSheet: View {
             componentDescription: AudioComponentDescriptionCodable(from: info.componentDescription)
         )
         chainManager.addPlugin(plugin, to: chain)
+    }
+}
+
+// MARK: - Model Naming Sheet
+
+struct ModelNamingSheet: View {
+    let chains: [ProcessingChain]
+    @Binding var modelNames: [UUID: String]
+    let onConfirm: () -> Void
+    let onCancel: () -> Void
+    
+    @State private var localNames: [UUID: String] = [:]
+    
+    var body: some View {
+        VStack(spacing: 20) {
+            Text("Name Your Models")
+                .font(.title)
+                .fontWeight(.bold)
+            
+            Text("Enter names for each model before processing. Leave blank to use chain name.")
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+            
+            ScrollView {
+                VStack(spacing: 16) {
+                    ForEach(chains) { chain in
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack {
+                                Text(chain.name)
+                                    .font(.headline)
+                                Spacer()
+                                Text("\(chain.plugins.count) plugin\(chain.plugins.count == 1 ? "" : "s")")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            
+                            TextField("Model name (leave empty to use chain name)", 
+                                    text: Binding(
+                                        get: { localNames[chain.id] ?? modelNames[chain.id] ?? "" },
+                                        set: { localNames[chain.id] = $0 }
+                                    ))
+                            .textFieldStyle(.roundedBorder)
+                            
+                            if let name = localNames[chain.id], !name.isEmpty {
+                                Text("Will save as: \(name.replacingOccurrences(of: " ", with: "_")).nam")
+                                    .font(.caption)
+                                    .foregroundColor(.green)
+                            } else if !(modelNames[chain.id] ?? "").isEmpty {
+                                Text("Will save as: \(modelNames[chain.id]!.replacingOccurrences(of: " ", with: "_")).nam")
+                                    .font(.caption)
+                                    .foregroundColor(.green)
+                            } else {
+                                Text("Will save as: \(chain.name.replacingOccurrences(of: " ", with: "_")).nam")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                        .padding()
+                        .background(Color(NSColor.controlBackgroundColor))
+                        .cornerRadius(8)
+                    }
+                }
+                .padding()
+            }
+            .frame(maxHeight: 400)
+            
+            HStack(spacing: 16) {
+                Button("Cancel") {
+                    onCancel()
+                }
+                .keyboardShortcut(.cancelAction)
+                
+                Button("Start Processing") {
+                    // Update model names with local edits
+                    for (id, name) in localNames where !name.isEmpty {
+                        modelNames[id] = name
+                    }
+                    onConfirm()
+                }
+                .keyboardShortcut(.defaultAction)
+                .buttonStyle(.borderedProminent)
+            }
+        }
+        .padding(30)
+        .frame(width: 600)
     }
 }
 
