@@ -40,9 +40,9 @@ NAM Reamp Lab streamlines the workflow of creating NAM models from your existing
 
 ## Requirements
 
-- **macOS 13.0** (Ventura) or later
+- **macOS 15.0** (Sequoia) or later
 - **Xcode 15.0** or later (for building)
-- **Python 3.9+** with PyTorch (for training)
+- **Python 3.10** with PyTorch (for training - NOT 3.14, MPS issues)
 - Audio Unit plugins you want to capture
 
 ## Installation
@@ -62,18 +62,21 @@ open "NAM Reamp Lab.xcodeproj"
 
 ### Python Environment Setup
 
-For training functionality, set up a Python environment:
+For training functionality, set up a Python 3.10 environment (3.10 specifically - newer versions have MPS issues):
 
 ```bash
-# Create virtual environment
-python3 -m venv .venv
+# Create virtual environment with Python 3.10
+python3.10 -m venv .venv
 source .venv/bin/activate
+
+# Install PyTorch with MPS support
+pip install torch torchvision torchaudio
 
 # Install NAM training package
 pip install neural-amp-modeler
 
-# For GPU acceleration on Apple Silicon
-pip install torch torchvision torchaudio
+# Verify MPS is available
+python -c "import torch; print('MPS:', torch.backends.mps.is_available())"
 ```
 
 ## Usage
@@ -115,18 +118,22 @@ NAM Reamp Lab/
 
 ### Audio Processing
 - Uses `AVAudioEngine` for real-time audio routing
-- Supports both in-process and out-of-process Audio Unit loading
+- **In-process Audio Unit loading** for reliable offline rendering
+- Chunk-based processing (4096 samples) - handles any file length
 - Real-time convolution for IR processing via Accelerate/vDSP
+- Plugin preset/state saving and restoration during batch processing
 
 ### Plugin Hosting
 - Full Audio Unit v3 support
 - Custom plugin UI hosting via `AUViewController`
-- Out-of-process loading for third-party plugins (avoids code signature issues)
+- In-process loading for offline rendering (out-of-process causes error 4099)
 
 ### Training
-- Subprocess-based Python execution for isolation
-- Supports conda and venv environments
+- Subprocess-based Python execution with clean environment spawning
+- Uses `nam-full` CLI with WaveNet architecture
 - Automatic MPS (Metal) GPU detection on Apple Silicon
+- ESR (Error Signal Ratio) display with color-coded quality indicators
+- Models saved directly to configured folder with chain name
 
 ## Known Limitations
 

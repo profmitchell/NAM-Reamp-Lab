@@ -373,6 +373,11 @@ struct ChainBuilderView: View {
                 HStack(spacing: 8) {
                     ProgressView(value: chainManager.processingProgress)
                         .frame(width: 120)
+                    Text("\(Int(chainManager.processingProgress * 100))%")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .monospacedDigit()
+                        .frame(width: 35, alignment: .trailing)
                     Text(chainManager.currentProcessingChain)
                         .font(.caption)
                         .foregroundColor(.secondary)

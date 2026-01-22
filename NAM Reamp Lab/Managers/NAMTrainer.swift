@@ -45,11 +45,13 @@ class NAMTrainer: ObservableObject {
     func createJob(
         inputFilePath: String,
         outputFilePath: String,
+        modelName: String? = nil,
         chainName: String? = nil
     ) -> TrainingJob {
         let job = TrainingJob(
             inputFilePath: inputFilePath,
             outputFilePath: outputFilePath,
+            modelName: modelName,
             chainName: chainName,
             totalEpochs: parameters.epochs
         )
@@ -121,7 +123,15 @@ class NAMTrainer: ObservableObject {
                 jobs[index].modelOutputPath = modelOutputPath
                 
                 // Set lastCompletedJob to trigger completion dialog
-                lastCompletedJob = jobs[index]
+                // Clear first to ensure onChange fires even if set multiple times
+                lastCompletedJob = nil
+                
+                // Use Task to ensure UI updates on next run loop
+                Task { @MainActor in
+                    try? await Task.sleep(for: .milliseconds(100))
+                    lastCompletedJob = jobs[index]
+                    print("✅ Set lastCompletedJob: \(jobs[index].chainName ?? "unknown") -> \(jobs[index].modelOutputPath ?? "no path")")
+                }
             }
         } catch {
             // Update job on failure
@@ -174,17 +184,23 @@ class NAMTrainer: ObservableObject {
     // MARK: - Private Methods
     
     private func runTraining(for job: TrainingJob) async throws -> String {
-        // Generate output model path
+        // Generate output model path - save directly to model folder with proper name
         let outputDir = AppSettings.shared.defaultModelFolder
-        let modelName = URL(fileURLWithPath: job.outputFilePath).deletingPathExtension().lastPathComponent
-        let trainingOutputDir = "\(outputDir)/\(modelName)_training"
-        let modelOutputPath = "\(trainingOutputDir)/model.nam"
+        let sanitizedModelName = job.modelName
+            .replacingOccurrences(of: " ", with: "_")
+            .replacingOccurrences(of: "/", with: "-")
+            .replacingOccurrences(of: ":", with: "-")
         
-        // Create training output directory
-        try FileManager.default.createDirectory(atPath: trainingOutputDir, withIntermediateDirectories: true)
+        // Create a training run folder for configs/checkpoints, but model goes directly to output folder
+        let trainingRunDir = "\(outputDir)/.training_runs/\(sanitizedModelName)_\(UUID().uuidString.prefix(8))"
+        let modelOutputPath = "\(outputDir)/\(sanitizedModelName).nam"
+        
+        // Create directories
+        try FileManager.default.createDirectory(atPath: outputDir, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(atPath: trainingRunDir, withIntermediateDirectories: true)
         
         // Create config files for nam-full
-        let configDir = "\(trainingOutputDir)/configs"
+        let configDir = "\(trainingRunDir)/configs"
         try FileManager.default.createDirectory(atPath: configDir, withIntermediateDirectories: true)
         
         // Data config
@@ -283,28 +299,29 @@ class NAMTrainer: ObservableObject {
         print("  Data config: \(configDir)/data.json")
         print("  Model config: \(configDir)/model.json")
         print("  Learning config: \(configDir)/learning.json")
-        print("  Output dir: \(trainingOutputDir)")
+        print("  Training run dir: \(trainingRunDir)")
+        print("  Final model output: \(modelOutputPath)")
         
         // Write a batch training script that runs in a fresh shell
-        let scriptPath = "\(trainingOutputDir)/train.sh"
+        let scriptPath = "\(trainingRunDir)/train.sh"
         let scriptContent = """
         #!/bin/zsh
         # Fresh environment for MPS GPU training
         export PATH="\(venvPath):/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin"
         export HOME="\(NSHomeDirectory())"
         
-        cd "\(trainingOutputDir)"
+        cd "\(trainingRunDir)"
         "\(venvPath)/nam-full" --no-show \\
             "\(configDir)/data.json" \\
             "\(configDir)/model.json" \\
             "\(configDir)/learning.json" \\
-            "\(trainingOutputDir)"
+            "\(trainingRunDir)"
         
         EXIT_CODE=$?
         if [ $EXIT_CODE -eq 0 ]; then
             echo ""
             echo "✅ Training complete!"
-            MODEL_PATH=$(find "\(trainingOutputDir)" -name "model.nam" -type f 2>/dev/null | head -1)
+            MODEL_PATH=$(find "\(trainingRunDir)" -name "model.nam" -type f 2>/dev/null | head -1)
             echo "Model saved to: $MODEL_PATH"
         else
             echo ""
@@ -329,7 +346,7 @@ class NAMTrainer: ObservableObject {
                     let process = Process()
                     process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
                     process.arguments = ["-i", "/bin/zsh", scriptPath]  // -i = ignore inherited environment
-                    process.currentDirectoryURL = URL(fileURLWithPath: trainingOutputDir)
+                    process.currentDirectoryURL = URL(fileURLWithPath: trainingRunDir)
                     
                     // Minimal clean environment - don't inherit from app
                     process.environment = [
@@ -380,19 +397,46 @@ class NAMTrainer: ObservableObject {
                     errorPipe.fileHandleForReading.readabilityHandler = nil
                     
                     if process.terminationStatus == 0 {
-                        // Find the model
+                        // Find the model in training run dir and copy to final destination
                         let fm = FileManager.default
-                        if let contents = try? fm.contentsOfDirectory(atPath: trainingOutputDir) {
+                        var foundModelPath: String?
+                        
+                        if let contents = try? fm.contentsOfDirectory(atPath: trainingRunDir) {
                             let dateFolders = contents.filter { $0.contains("-") && !$0.contains(".") }.sorted().reversed()
                             for folder in dateFolders {
-                                let modelPath = "\(trainingOutputDir)/\(folder)/model.nam"
-                                if fm.fileExists(atPath: modelPath) {
-                                    continuation.resume(returning: modelPath)
-                                    return
+                                let tempModelPath = "\(trainingRunDir)/\(folder)/model.nam"
+                                if fm.fileExists(atPath: tempModelPath) {
+                                    foundModelPath = tempModelPath
+                                    break
                                 }
                             }
                         }
-                        continuation.resume(returning: "\(trainingOutputDir)/model.nam")
+                        
+                        // Also check directly in training run dir
+                        if foundModelPath == nil {
+                            let directPath = "\(trainingRunDir)/model.nam"
+                            if fm.fileExists(atPath: directPath) {
+                                foundModelPath = directPath
+                            }
+                        }
+                        
+                        if let sourcePath = foundModelPath {
+                            // Copy/move to final destination with proper name
+                            do {
+                                // Remove existing if present
+                                if fm.fileExists(atPath: modelOutputPath) {
+                                    try fm.removeItem(atPath: modelOutputPath)
+                                }
+                                try fm.copyItem(atPath: sourcePath, toPath: modelOutputPath)
+                                print("✅ Model saved to: \(modelOutputPath)")
+                                continuation.resume(returning: modelOutputPath)
+                            } catch {
+                                print("⚠️ Failed to copy model: \(error). Using source path.")
+                                continuation.resume(returning: sourcePath)
+                            }
+                        } else {
+                            continuation.resume(returning: modelOutputPath)
+                        }
                     } else {
                         continuation.resume(throwing: TrainingError.trainingFailed("Exit code: \(process.terminationStatus)"))
                     }

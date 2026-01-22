@@ -42,6 +42,7 @@ struct TrainingJob: Identifiable, Codable, Equatable {
     var inputFilePath: String
     var outputFilePath: String
     var modelOutputPath: String?
+    var modelName: String  // Name for the output .nam file (without extension)
     var chainName: String?
     var status: TrainingStatus
     var progress: Double // 0.0 to 1.0
@@ -58,6 +59,7 @@ struct TrainingJob: Identifiable, Codable, Equatable {
         inputFilePath: String,
         outputFilePath: String,
         modelOutputPath: String? = nil,
+        modelName: String? = nil,
         chainName: String? = nil,
         status: TrainingStatus = .pending,
         progress: Double = 0.0,
@@ -73,6 +75,8 @@ struct TrainingJob: Identifiable, Codable, Equatable {
         self.inputFilePath = inputFilePath
         self.outputFilePath = outputFilePath
         self.modelOutputPath = modelOutputPath
+        // Default model name to chain name, or derive from output file
+        self.modelName = modelName ?? chainName ?? URL(fileURLWithPath: outputFilePath).deletingPathExtension().lastPathComponent
         self.chainName = chainName
         self.status = status
         self.progress = progress

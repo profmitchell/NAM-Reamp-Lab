@@ -275,7 +275,7 @@ class AudioUnitHostManager: ObservableObject {
         
         print("   Processing through \(totalPlugins) enabled plugins...")
         
-        for plugin in enabledPlugins {
+        for (pluginIndex, plugin) in enabledPlugins.enumerated() {
             print("   → Processing with: \(plugin.name) (\(plugin.type.rawValue))")
             
             switch plugin.type {
@@ -290,7 +290,12 @@ class AudioUnitHostManager: ObservableObject {
                         currentBuffer,
                         description: auDesc.toAudioComponentDescription(),
                         presetData: plugin.presetData
-                    )
+                    ) { chunkProgress in
+                        // Combine plugin-level and chunk-level progress
+                        let pluginBase = Double(pluginIndex) / Double(totalPlugins)
+                        let pluginContribution = chunkProgress / Double(totalPlugins)
+                        progressHandler(pluginBase + pluginContribution)
+                    }
                 } else {
                     print("     ⚠️ No component description for plugin \(plugin.name)")
                 }
@@ -413,7 +418,7 @@ class AudioUnitHostManager: ObservableObject {
         return namComponent
     }
     
-    private func processWithAudioUnit(_ buffer: AVAudioPCMBuffer, description: AudioComponentDescription, presetData: Data?) async throws -> AVAudioPCMBuffer {
+    private func processWithAudioUnit(_ buffer: AVAudioPCMBuffer, description: AudioComponentDescription, presetData: Data?, progressHandler: @escaping (Double) -> Void = { _ in }) async throws -> AVAudioPCMBuffer {
         // IMPORTANT: For offline rendering, we MUST use in-process loading
         // Out-of-process AUs crash with error 4099 during offline rendering
         let options: AudioComponentInstantiationOptions = []
@@ -514,8 +519,15 @@ class AudioUnitHostManager: ObservableObject {
                 throw AudioUnitError.renderFailed
             }
             
-            // Progress logging (every 10%)
+            // Progress reporting
             let progress = Double(framesRendered) / Double(totalFrames)
+            
+            // Update UI progress
+            await MainActor.run {
+                progressHandler(progress)
+            }
+            
+            // Console logging (every 10%)
             if progress - lastProgressPrint >= 0.1 {
                 print("     Progress: \(Int(progress * 100))%")
                 lastProgressPrint = progress

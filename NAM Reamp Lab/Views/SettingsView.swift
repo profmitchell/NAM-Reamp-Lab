@@ -165,7 +165,7 @@ struct SettingsView: View {
     private var folderSection: some View {
         Section {
             folderRow(
-                title: "Output Folder",
+                title: "Processed Audio Folder",
                 path: settings.defaultOutputFolder,
                 showingPicker: $showingOutputFolderPicker
             ) { url in
@@ -173,7 +173,7 @@ struct SettingsView: View {
             }
             
             folderRow(
-                title: "Model Folder",
+                title: "Trained Models Folder",
                 path: settings.defaultModelFolder,
                 showingPicker: $showingModelFolderPicker
             ) { url in
@@ -194,7 +194,10 @@ struct SettingsView: View {
         } header: {
             Label("Default Folders", systemImage: "folder")
         } footer: {
-            Text("Set default locations for processed audio, trained models, and impulse responses.")
+            VStack(alignment: .leading, spacing: 4) {
+                Text("**Trained Models Folder** - Where your .nam models are saved after training.")
+                Text("**Processed Audio Folder** - Where reamped audio files are saved.")
+            }
         }
     }
     

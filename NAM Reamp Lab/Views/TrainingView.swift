@@ -63,7 +63,9 @@ struct TrainingView: View {
             }
         }
         .onChange(of: trainer.lastCompletedJob) { oldValue, newValue in
+            print("📋 lastCompletedJob changed: \(oldValue?.chainName ?? "nil") -> \(newValue?.chainName ?? "nil")")
             if let job = newValue {
+                print("📋 Setting completedJob and showing dialog")
                 completedJob = job
                 showingCompletionDialog = true
             }
@@ -923,8 +925,26 @@ struct TrainingCompletionSheet: View {
     }
     
     private func openInFinder() {
-        guard let path = job.modelOutputPath else { return }
-        NSWorkspace.shared.selectFile(path, inFileViewerRootedAtPath: "")
+        guard let path = job.modelOutputPath else { 
+            print("⚠️ No model output path")
+            return 
+        }
+        
+        let url = URL(fileURLWithPath: path)
+        let fm = FileManager.default
+        
+        if fm.fileExists(atPath: path) {
+            // File exists - select it in Finder
+            NSWorkspace.shared.selectFile(path, inFileViewerRootedAtPath: "")
+        } else {
+            // File doesn't exist - open the parent folder
+            let folder = url.deletingLastPathComponent()
+            if fm.fileExists(atPath: folder.path) {
+                NSWorkspace.shared.open(folder)
+            } else {
+                print("⚠️ Neither file nor folder exists: \(path)")
+            }
+        }
     }
     
     private func renameModel() {
