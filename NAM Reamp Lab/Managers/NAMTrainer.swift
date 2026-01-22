@@ -171,130 +171,227 @@ class NAMTrainer: ObservableObject {
         // Generate output model path
         let outputDir = AppSettings.shared.defaultModelFolder
         let modelName = URL(fileURLWithPath: job.outputFilePath).deletingPathExtension().lastPathComponent
-        let modelOutputPath = "\(outputDir)/\(modelName).nam"
+        let trainingOutputDir = "\(outputDir)/\(modelName)_training"
+        let modelOutputPath = "\(trainingOutputDir)/model.nam"
         
-        // Build Python training script
-        let trainingScript = buildTrainingScript(
-            inputPath: job.inputFilePath,
-            outputPath: job.outputFilePath,
-            modelOutputPath: modelOutputPath
-        )
+        // Create training output directory
+        try FileManager.default.createDirectory(atPath: trainingOutputDir, withIntermediateDirectories: true)
         
-        // Run the training via Python
+        // Create config files for nam-full
+        let configDir = "\(trainingOutputDir)/configs"
+        try FileManager.default.createDirectory(atPath: configDir, withIntermediateDirectories: true)
+        
+        // Data config
+        let dataConfig = """
+        {
+            "train": {
+                "start_seconds": null,
+                "stop_seconds": -9.0,
+                "ny": 8192
+            },
+            "validation": {
+                "start_seconds": -9.0,
+                "stop_seconds": null,
+                "ny": null
+            },
+            "common": {
+                "x_path": "\(job.inputFilePath)",
+                "y_path": "\(job.outputFilePath)",
+                "delay": 0
+            }
+        }
+        """
+        try dataConfig.write(toFile: "\(configDir)/data.json", atomically: true, encoding: .utf8)
+        
+        // Model config (WaveNet standard)
+        let modelConfig = """
+        {
+            "net": {
+                "name": "WaveNet",
+                "config": {
+                    "layers_configs": [
+                        {
+                            "condition_size": 1,
+                            "input_size": 1,
+                            "channels": 16,
+                            "head_size": 8,
+                            "kernel_size": 3,
+                            "dilations": [1, 2, 4, 8, 16, 32, 64, 128, 256, 512],
+                            "activation": "Tanh",
+                            "gated": false,
+                            "head_bias": false
+                        },
+                        {
+                            "condition_size": 1,
+                            "input_size": 16,
+                            "channels": 8,
+                            "head_size": 1,
+                            "kernel_size": 3,
+                            "dilations": [1, 2, 4, 8, 16, 32, 64, 128, 256, 512],
+                            "activation": "Tanh",
+                            "gated": false,
+                            "head_bias": true
+                        }
+                    ],
+                    "head_scale": 0.02
+                }
+            },
+            "optimizer": {
+                "lr": \(parameters.learningRate)
+            },
+            "lr_scheduler": {
+                "class": "ExponentialLR",
+                "kwargs": {
+                    "gamma": 0.993
+                }
+            }
+        }
+        """
+        try modelConfig.write(toFile: "\(configDir)/model.json", atomically: true, encoding: .utf8)
+        
+        // Learning config - Use MPS (Apple GPU) for fast training
+        let learningConfig = """
+        {
+            "train_dataloader": {
+                "batch_size": \(parameters.batchSize),
+                "shuffle": true,
+                "pin_memory": false,
+                "drop_last": true,
+                "num_workers": 0
+            },
+            "val_dataloader": {},
+            "trainer": {
+                "accelerator": "mps",
+                "devices": 1,
+                "max_epochs": \(parameters.epochs)
+            },
+            "trainer_fit_kwargs": {}
+        }
+        """
+        try learningConfig.write(toFile: "\(configDir)/learning.json", atomically: true, encoding: .utf8)
+        
+        // Use nam-full CLI - spawn as completely detached process
+        let venvPath = "/Users/Shared/CohenConcepts/NAM Reamp Lab/.venv/bin"
+        
+        print("Training using nam-full CLI")
+        print("  Data config: \(configDir)/data.json")
+        print("  Model config: \(configDir)/model.json")
+        print("  Learning config: \(configDir)/learning.json")
+        print("  Output dir: \(trainingOutputDir)")
+        
+        // Write a batch training script that runs in a fresh shell
+        let scriptPath = "\(trainingOutputDir)/train.sh"
+        let scriptContent = """
+        #!/bin/zsh
+        # Fresh environment for MPS GPU training
+        export PATH="\(venvPath):/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin"
+        export HOME="\(NSHomeDirectory())"
+        
+        cd "\(trainingOutputDir)"
+        "\(venvPath)/nam-full" --no-show \\
+            "\(configDir)/data.json" \\
+            "\(configDir)/model.json" \\
+            "\(configDir)/learning.json" \\
+            "\(trainingOutputDir)"
+        
+        EXIT_CODE=$?
+        if [ $EXIT_CODE -eq 0 ]; then
+            echo ""
+            echo "✅ Training complete!"
+            MODEL_PATH=$(find "\(trainingOutputDir)" -name "model.nam" -type f 2>/dev/null | head -1)
+            echo "Model saved to: $MODEL_PATH"
+        else
+            echo ""
+            echo "❌ Training failed with exit code $EXIT_CODE"
+        fi
+        exit $EXIT_CODE
+        """
+        try scriptContent.write(toFile: scriptPath, atomically: true, encoding: .utf8)
+        
+        // Make executable
+        let chmod = Process()
+        chmod.executableURL = URL(fileURLWithPath: "/bin/chmod")
+        chmod.arguments = ["+x", scriptPath]
+        try chmod.run()
+        chmod.waitUntilExit()
+        
+        // Run via /usr/bin/env with completely clean environment
+        // This is critical - don't inherit ANY environment from the Swift app
         return try await withCheckedThrowingContinuation { continuation in
-            Task {
+            DispatchQueue.global(qos: .userInitiated).async {
                 do {
                     let process = Process()
-                    process.executableURL = URL(fileURLWithPath: AppSettings.shared.pythonPath)
-                    process.arguments = ["-c", trainingScript]
+                    process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+                    process.arguments = ["-i", "/bin/zsh", scriptPath]  // -i = ignore inherited environment
+                    process.currentDirectoryURL = URL(fileURLWithPath: trainingOutputDir)
                     
-                    // Set up environment
-                    var env = ProcessInfo.processInfo.environment
-                    let namPath = AppSettings.shared.namPackagePath
-                    if !namPath.isEmpty {
-                        env["PYTHONPATH"] = "\(namPath):\(env["PYTHONPATH"] ?? "")"
-                    }
-                    process.environment = env
+                    // Minimal clean environment - don't inherit from app
+                    process.environment = [
+                        "PATH": "\(venvPath):/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin",
+                        "HOME": NSHomeDirectory(),
+                        "TERM": "xterm-256color",
+                        "LANG": "en_US.UTF-8"
+                    ]
                     
                     let outputPipe = Pipe()
                     let errorPipe = Pipe()
                     process.standardOutput = outputPipe
                     process.standardError = errorPipe
                     
-                    currentProcess = process
-                    
-                    // Capture self for use in handlers
                     let trainer = self
+                    let jobCopy = job
                     
-                    // Handle output for progress parsing
+                    // Async read handlers
                     outputPipe.fileHandleForReading.readabilityHandler = { handle in
                         let data = handle.availableData
-                        if let output = String(data: data, encoding: .utf8), !output.isEmpty {
-                            Task { @MainActor in
-                                trainer.parseTrainingOutput(output, for: job)
-                            }
+                        guard !data.isEmpty, let output = String(data: data, encoding: .utf8) else { return }
+                        print(output, terminator: "")  // Echo to console
+                        DispatchQueue.main.async {
+                            trainer.parseTrainingOutput(output, for: jobCopy)
                         }
                     }
                     
                     errorPipe.fileHandleForReading.readabilityHandler = { handle in
                         let data = handle.availableData
-                        if let output = String(data: data, encoding: .utf8), !output.isEmpty {
-                            Task { @MainActor in
-                                trainer.parseTrainingOutput(output, for: job)
-                            }
+                        guard !data.isEmpty, let output = String(data: data, encoding: .utf8) else { return }
+                        print(output, terminator: "")  // Echo to console
+                        DispatchQueue.main.async {
+                            trainer.parseTrainingOutput(output, for: jobCopy)
                         }
+                    }
+                    
+                    DispatchQueue.main.async {
+                        self.currentProcess = process
                     }
                     
                     try process.run()
                     process.waitUntilExit()
                     
-                    // Clean up handlers
                     outputPipe.fileHandleForReading.readabilityHandler = nil
                     errorPipe.fileHandleForReading.readabilityHandler = nil
                     
                     if process.terminationStatus == 0 {
-                        continuation.resume(returning: modelOutputPath)
+                        // Find the model
+                        let fm = FileManager.default
+                        if let contents = try? fm.contentsOfDirectory(atPath: trainingOutputDir) {
+                            let dateFolders = contents.filter { $0.contains("-") && !$0.contains(".") }.sorted().reversed()
+                            for folder in dateFolders {
+                                let modelPath = "\(trainingOutputDir)/\(folder)/model.nam"
+                                if fm.fileExists(atPath: modelPath) {
+                                    continuation.resume(returning: modelPath)
+                                    return
+                                }
+                            }
+                        }
+                        continuation.resume(returning: "\(trainingOutputDir)/model.nam")
                     } else {
-                        let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
-                        let errorString = String(data: errorData, encoding: .utf8) ?? "Unknown error"
-                        continuation.resume(throwing: TrainingError.trainingFailed(errorString))
+                        continuation.resume(throwing: TrainingError.trainingFailed("Exit code: \(process.terminationStatus)"))
                     }
-                    
                 } catch {
                     continuation.resume(throwing: error)
                 }
             }
         }
-    }
-    
-    private func buildTrainingScript(inputPath: String, outputPath: String, modelOutputPath: String) -> String {
-        let architecture = parameters.architecture.rawValue.lowercased()
-        
-        return """
-        import sys
-        import os
-        
-        # Add NAM to path if needed
-        nam_path = '\(AppSettings.shared.namPackagePath)'
-        if nam_path and nam_path not in sys.path:
-            sys.path.insert(0, nam_path)
-        
-        from nam.train.core import train
-        from nam.models.factory import get_model_config
-        
-        # Training configuration
-        input_path = '\(inputPath)'
-        output_path = '\(outputPath)'
-        model_output_path = '\(modelOutputPath)'
-        
-        # Get model config for \(architecture)
-        model_config = get_model_config('\(architecture)')
-        
-        # Training parameters
-        training_config = {
-            'epochs': \(parameters.epochs),
-            'lr': \(parameters.learningRate),
-            'batch_size': \(parameters.batchSize),
-            'val_split': \(parameters.validationSplit),
-        }
-        
-        # Run training
-        print(f"Starting training: {input_path} -> {output_path}")
-        print(f"Architecture: \(architecture)")
-        print(f"Epochs: \(parameters.epochs)")
-        
-        try:
-            train(
-                input_path=input_path,
-                output_path=output_path,
-                model_config=model_config,
-                **training_config
-            )
-            print(f"Training complete! Model saved to: {model_output_path}")
-        except Exception as e:
-            print(f"Training failed: {e}", file=sys.stderr)
-            sys.exit(1)
-        """
     }
     
     private func parseTrainingOutput(_ output: String, for job: TrainingJob) {

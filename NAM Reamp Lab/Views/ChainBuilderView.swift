@@ -277,6 +277,12 @@ struct ChainBuilderView: View {
     @ViewBuilder
     private func chainContextMenu(for chain: ProcessingChain) -> some View {
         Button {
+            exportChain(chain)
+        } label: {
+            Label("Save Chain...", systemImage: "square.and.arrow.down")
+        }
+        
+        Button {
             chainManager.toggleChain(chain)
         } label: {
             Label(chain.isEnabled ? "Disable" : "Enable", 
@@ -461,10 +467,22 @@ struct ChainBuilderView: View {
     private func processAllChains() async {
         let outputFolder = URL(fileURLWithPath: AppSettings.shared.defaultOutputFolder)
         
+        // Create output folder if it doesn't exist
+        try? FileManager.default.createDirectory(at: outputFolder, withIntermediateDirectories: true)
+        
+        print("🎛️ Processing chains...")
+        print("   Input: \(chainManager.inputFileURL?.path ?? "none")")
+        print("   Output folder: \(outputFolder.path)")
+        print("   Enabled chains: \(chainManager.enabledChains.count)")
+        
         do {
             let outputURLs = try await chainManager.processAllEnabledChains(outputFolder: outputFolder)
-            print("Processed \(outputURLs.count) chains")
+            print("✅ Processed \(outputURLs.count) chains:")
+            for url in outputURLs {
+                print("   - \(url.lastPathComponent)")
+            }
         } catch {
+            print("❌ Processing failed: \(error)")
             processingError = error.localizedDescription
             showingError = true
         }
@@ -473,8 +491,20 @@ struct ChainBuilderView: View {
     private func processAndSendToTraining() async {
         let outputFolder = URL(fileURLWithPath: AppSettings.shared.defaultOutputFolder)
         
+        // Create output folder if it doesn't exist
+        try? FileManager.default.createDirectory(at: outputFolder, withIntermediateDirectories: true)
+        
+        print("🎛️ Process & Train workflow starting...")
+        print("   Input: \(chainManager.inputFileURL?.path ?? "none")")
+        print("   Output folder: \(outputFolder.path)")
+        print("   Enabled chains: \(chainManager.enabledChains.count)")
+        for chain in chainManager.enabledChains {
+            print("   - \(chain.name): \(chain.plugins.count) plugins")
+        }
+        
         do {
             // Process all enabled chains
+            print("📼 Processing audio through chains...")
             let outputURLs = try await chainManager.processAllEnabledChains(outputFolder: outputFolder)
             
             guard !outputURLs.isEmpty else {
@@ -483,12 +513,24 @@ struct ChainBuilderView: View {
                 return
             }
             
+            print("✅ Processed \(outputURLs.count) chains:")
+            for url in outputURLs {
+                print("   - \(url.lastPathComponent)")
+            }
+            
             // Create training jobs for each output
             let trainer = NAMTrainer.shared
-            guard let inputURL = chainManager.inputFileURL else { return }
+            guard let inputURL = chainManager.inputFileURL else {
+                print("❌ No input file URL!")
+                return
+            }
             
+            print("🧠 Creating training jobs...")
             for (index, outputURL) in outputURLs.enumerated() {
                 let chainName = chainManager.enabledChains[safe: index]?.name ?? "Chain \(index + 1)"
+                print("   Creating job: \(chainName)")
+                print("     Input (DI): \(inputURL.path)")
+                print("     Output (Reamped): \(outputURL.path)")
                 trainer.createJob(
                     inputFilePath: inputURL.path,
                     outputFilePath: outputURL.path,
@@ -499,8 +541,9 @@ struct ChainBuilderView: View {
             // Switch to Training tab
             NotificationCenter.default.post(name: .switchToTrainingTab, object: nil)
             
-            print("Created \(outputURLs.count) training jobs")
+            print("✅ Created \(outputURLs.count) training jobs - switching to Training tab")
         } catch {
+            print("❌ Process & Train failed: \(error)")
             processingError = error.localizedDescription
             showingError = true
         }

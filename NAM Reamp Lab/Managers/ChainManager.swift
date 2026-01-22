@@ -57,6 +57,12 @@ class ChainManager: ObservableObject {
         // Create app folder if needed
         try? FileManager.default.createDirectory(at: appFolder, withIntermediateDirectories: true)
         
+        // Auto-load default input file if it exists
+        let defaultInputPath = "/Users/Shared/CohenConcepts/NAM Reamp Lab/input.wav"
+        if FileManager.default.fileExists(atPath: defaultInputPath) {
+            inputFileURL = URL(fileURLWithPath: defaultInputPath)
+        }
+        
         // Defer loading chains to avoid publishing during view updates
         // when the singleton is first accessed from a SwiftUI view
         Task { @MainActor in
@@ -177,12 +183,18 @@ class ChainManager: ObservableObject {
     /// Processes all enabled chains
     func processAllEnabledChains(outputFolder: URL) async throws -> [URL] {
         guard let inputURL = inputFileURL else {
+            print("❌ ChainManager: No input file set")
             throw ChainError.noInputFile
         }
         
         guard !enabledChains.isEmpty else {
+            print("❌ ChainManager: No chains enabled")
             throw ChainError.noChainsEnabled
         }
+        
+        print("📼 ChainManager: Starting offline processing...")
+        print("   Input file: \(inputURL.path)")
+        print("   Output folder: \(outputFolder.path)")
         
         isProcessing = true
         processingProgress = 0.0
@@ -198,8 +210,11 @@ class ChainManager: ObservableObject {
         
         for (index, chain) in enabledChains.enumerated() {
             currentProcessingChain = chain.name
+            print("🔊 Processing chain \(index + 1)/\(totalChains): \(chain.name)")
+            print("   Plugins: \(chain.plugins.map { $0.name }.joined(separator: " → "))")
             
             let outputURL = outputFolder.appendingPathComponent(chain.outputFileName)
+            print("   Output: \(outputURL.lastPathComponent)")
             
             try await audioUnitManager.processAudioFile(
                 inputURL: inputURL,
@@ -213,8 +228,10 @@ class ChainManager: ObservableObject {
             
             outputURLs.append(outputURL)
             processingProgress = Double(index + 1) / Double(totalChains)
+            print("   ✓ Chain complete")
         }
         
+        print("✅ ChainManager: All chains processed")
         return outputURLs
     }
     
@@ -249,13 +266,29 @@ class ChainManager: ObservableObject {
     
     // MARK: - Persistence
     
-    /// Saves chains to disk
+    /// Saves chains to disk, capturing current plugin states
     func saveChains() {
+        // Capture current plugin states from the audio engine before saving
+        captureCurrentChainState()
+        
         do {
             let data = try JSONEncoder().encode(chains)
             try data.write(to: chainsFileURL)
+            print("Saved \(chains.count) chains to disk")
         } catch {
             print("Failed to save chains: \(error)")
+        }
+    }
+    
+    /// Captures the current plugin states from AudioEngine and updates the selected chain
+    func captureCurrentChainState() {
+        guard let selectedIndex = chains.firstIndex(where: { $0.id == selectedChain?.id }) else { return }
+        
+        // Get updated chain with plugin states from AudioEngine
+        if let updatedChain = AudioEngine.shared.updateChainWithPluginStates() {
+            chains[selectedIndex] = updatedChain
+            selectedChain = updatedChain
+            print("Captured plugin states for chain: \(updatedChain.name)")
         }
     }
     

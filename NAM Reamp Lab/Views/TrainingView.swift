@@ -526,14 +526,29 @@ struct TrainingJobDetailView: View {
     
     private var logView: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Training Log")
-                .font(.headline)
-                .foregroundColor(.secondary)
+            HStack {
+                Text("Training Log")
+                    .font(.headline)
+                    .foregroundColor(.secondary)
+                
+                Spacer()
+                
+                Button {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(job.logOutput, forType: .string)
+                } label: {
+                    Label("Copy", systemImage: "doc.on.doc")
+                        .font(.caption)
+                }
+                .buttonStyle(.borderless)
+                .disabled(job.logOutput.isEmpty)
+            }
             
             ScrollView {
                 ScrollViewReader { proxy in
                     Text(job.logOutput.isEmpty ? "No output yet..." : job.logOutput)
                         .font(.system(.caption, design: .monospaced))
+                        .textSelection(.enabled)  // Make text selectable
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .id("logBottom")
                         .onChange(of: job.logOutput) { _, _ in

@@ -125,13 +125,7 @@ class AudioEngine: ObservableObject {
             outputDevices = newOutputDevices
         }
         
-        // Select defaults if not set
-        if selectedInputDevice == nil {
-            selectedInputDevice = inputDevices.first
-        }
-        if selectedOutputDevice == nil {
-            selectedOutputDevice = outputDevices.first
-        }
+        // Don't auto-select devices - let user choose
     }
     
     /// Requests microphone permission
@@ -245,6 +239,9 @@ class AudioEngine: ObservableObject {
         
         currentChain = chain
         
+        // Track loaded plugin indices for state restoration
+        var loadedPluginIndex = 0
+        
         // Load each plugin in the chain
         for plugin in chain.plugins where plugin.isEnabled && !plugin.isBypassed {
             switch plugin.type {
@@ -254,7 +251,12 @@ class AudioEngine: ObservableObject {
                     if let modelPath = plugin.path {
                         try await loadNAMModel(namUnit, modelPath: modelPath)
                     }
+                    // Restore saved state if available (includes NAM model path)
+                    if let presetData = plugin.presetData {
+                        restorePluginState(at: loadedPluginIndex, from: presetData)
+                    }
                     addEffectNode(namUnit)
+                    loadedPluginIndex += 1
                 }
                 
             case .audioUnit:
@@ -262,6 +264,12 @@ class AudioEngine: ObservableObject {
                 if let desc = plugin.componentDescription {
                     let unit = try await loadAudioUnit(desc.toAudioComponentDescription())
                     addEffectNode(unit)
+                    // Restore saved preset state (includes all plugin settings)
+                    if let presetData = plugin.presetData {
+                        restorePluginState(at: loadedPluginIndex, from: presetData)
+                        print("Restored AU preset for: \(plugin.name)")
+                    }
+                    loadedPluginIndex += 1
                 }
                 
             case .impulseResponse:
@@ -269,6 +277,7 @@ class AudioEngine: ObservableObject {
                 if let irPath = plugin.path {
                     let irUnit = try await loadImpulseResponse(irPath)
                     addEffectNode(irUnit)
+                    loadedPluginIndex += 1
                 }
             }
         }
@@ -284,6 +293,29 @@ class AudioEngine: ObservableObject {
         loadedAudioUnits = effectNodes
     }
     
+    /// Updates the current chain with captured plugin states
+    /// Call this before saving the chain to persist AU presets
+    func updateChainWithPluginStates() -> ProcessingChain? {
+        guard var chain = currentChain else { return nil }
+        
+        let states = capturePluginStates()
+        
+        // Map states back to plugins
+        var pluginIndex = 0
+        for i in 0..<chain.plugins.count {
+            if chain.plugins[i].isEnabled && !chain.plugins[i].isBypassed {
+                if let stateData = states[pluginIndex] {
+                    chain.plugins[i].presetData = stateData
+                    print("Saved state for plugin: \(chain.plugins[i].name)")
+                }
+                pluginIndex += 1
+            }
+        }
+        
+        currentChain = chain
+        return chain
+    }
+    
     /// Clears all effects from the chain
     func clearEffects() {
         guard let engine = engine else { return }
@@ -295,6 +327,42 @@ class AudioEngine: ObservableObject {
         effectNodes.removeAll()
         loadedAudioUnits.removeAll()
         currentChain = nil
+    }
+    
+    /// Captures the current state of all loaded Audio Units
+    /// Returns a dictionary mapping plugin index to their preset data
+    func capturePluginStates() -> [Int: Data] {
+        var states: [Int: Data] = [:]
+        
+        for (index, unit) in effectNodes.enumerated() {
+            if let fullState = unit.auAudioUnit.fullState {
+                do {
+                    let data = try NSKeyedArchiver.archivedData(withRootObject: fullState, requiringSecureCoding: false)
+                    states[index] = data
+                    print("Captured state for plugin \(index): \(unit.name) (\(data.count) bytes)")
+                } catch {
+                    print("Failed to capture state for plugin \(index): \(error)")
+                }
+            }
+        }
+        
+        return states
+    }
+    
+    /// Restores state to a loaded Audio Unit at the specified index
+    func restorePluginState(at index: Int, from data: Data) {
+        guard index < effectNodes.count else { return }
+        
+        let unit = effectNodes[index]
+        
+        do {
+            if let state = try NSKeyedUnarchiver.unarchivedObject(ofClasses: [NSDictionary.self, NSString.self, NSNumber.self, NSData.self, NSArray.self], from: data) as? [String: Any] {
+                unit.auAudioUnit.fullState = state
+                print("Restored state for plugin \(index): \(unit.name)")
+            }
+        } catch {
+            print("Failed to restore state for plugin \(index): \(error)")
+        }
     }
     
     /// Gets the Audio Unit view for a loaded effect

@@ -247,36 +247,48 @@ class AudioUnitHostManager: ObservableObject {
         plugins: [AudioPlugin],
         progressHandler: @escaping (Double) -> Void
     ) async throws {
+        print("🔧 AudioUnitHostManager: Processing audio file")
+        print("   Input: \(inputURL.lastPathComponent)")
+        print("   Output: \(outputURL.lastPathComponent)")
+        
         // Load the input audio file
         let inputFile = try AVAudioFile(forReading: inputURL)
         let format = inputFile.processingFormat
         let frameCount = AVAudioFrameCount(inputFile.length)
+        print("   Format: \(format.sampleRate)Hz, \(format.channelCount) channels, \(frameCount) frames")
         
         // Create input buffer
         guard let inputBuffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount) else {
             throw AudioUnitError.bufferCreationFailed
         }
         try inputFile.read(into: inputBuffer)
+        print("   Loaded \(inputBuffer.frameLength) frames into buffer")
         
         // Create output file
         let outputFile = try AVAudioFile(forWriting: outputURL, settings: inputFile.fileFormat.settings)
         
         // Process through each plugin
         var currentBuffer = inputBuffer
-        let totalPlugins = plugins.filter { $0.isEnabled && !$0.isBypassed }.count
+        let enabledPlugins = plugins.filter { $0.isEnabled && !$0.isBypassed }
+        let totalPlugins = enabledPlugins.count
         var processedCount = 0
         
-        for plugin in plugins where plugin.isEnabled && !plugin.isBypassed {
+        print("   Processing through \(totalPlugins) enabled plugins...")
+        
+        for plugin in enabledPlugins {
+            print("   → Processing with: \(plugin.name) (\(plugin.type.rawValue))")
+            
             switch plugin.type {
             case .nam:
                 // For NAM models, we'd load the .nam file and process
-                // This would use the NAM Audio Unit or embedded processing
                 currentBuffer = try await processWithNAMModel(currentBuffer, modelPath: plugin.path ?? "")
                 
             case .audioUnit:
                 // Process with loaded Audio Unit
                 if let auDesc = plugin.componentDescription {
                     currentBuffer = try await processWithAudioUnit(currentBuffer, description: auDesc.toAudioComponentDescription())
+                } else {
+                    print("     ⚠️ No component description for plugin \(plugin.name)")
                 }
                 
             case .impulseResponse:
@@ -286,10 +298,12 @@ class AudioUnitHostManager: ObservableObject {
             
             processedCount += 1
             progressHandler(Double(processedCount) / Double(totalPlugins))
+            print("     ✓ Done (\(processedCount)/\(totalPlugins))")
         }
         
         // Write output
         try outputFile.write(from: currentBuffer)
+        print("   ✅ Wrote \(currentBuffer.frameLength) frames to output file")
     }
     
     // MARK: - Private Methods

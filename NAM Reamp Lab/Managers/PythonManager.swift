@@ -225,13 +225,8 @@ class PythonManager: ObservableObject {
             process.executableURL = URL(fileURLWithPath: pythonPath)
             process.arguments = ["-c", code]
             
-            // Set up environment
-            var env = ProcessInfo.processInfo.environment
-            if !namPackagePath.isEmpty {
-                let existingPath = env["PYTHONPATH"] ?? ""
-                env["PYTHONPATH"] = "\(namPackagePath):\(existingPath)"
-            }
-            process.environment = env
+            // Use environment as-is - NAM is installed in the venv, no PYTHONPATH manipulation needed
+            process.environment = ProcessInfo.processInfo.environment
             
             let outputPipe = Pipe()
             let errorPipe = Pipe()

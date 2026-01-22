@@ -109,7 +109,11 @@ class AppSettings: ObservableObject {
         }
         
         self.pythonPath = defaults.string(forKey: Keys.pythonPath) ?? defaultPythonPath
+        
+        // NAM package path - leave empty since NAM is installed in the venv
+        // Setting this would cause Python to import from the raw folder instead of installed package
         self.namPackagePath = defaults.string(forKey: Keys.namPackagePath) ?? ""
+        
         self.useBundledPython = defaults.bool(forKey: Keys.useBundledPython)
         
         // Folder settings
