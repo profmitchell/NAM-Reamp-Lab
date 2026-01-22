@@ -32,6 +32,13 @@ struct AudioDeviceInfo: Identifiable, Hashable {
     }
 }
 
+/// Microphone permission status
+enum MicrophonePermission {
+    case granted
+    case denied
+    case notDetermined
+}
+
 /// Real-time audio engine for live guitar processing through chains
 @MainActor
 class AudioEngine: ObservableObject {
@@ -44,10 +51,17 @@ class AudioEngine: ObservableObject {
     @Published private(set) var outputDevices: [AudioDeviceInfo] = []
     @Published var selectedInputDevice: AudioDeviceInfo?
     @Published var selectedOutputDevice: AudioDeviceInfo?
-    @Published var inputGain: Float = 1.0
-    @Published var outputGain: Float = 1.0
-    @Published var isMonitoring: Bool = false
+    @Published var inputGain: Float = 1.0 {
+        didSet { updateGains() }
+    }
+    @Published var outputGain: Float = 1.0 {
+        didSet { updateGains() }
+    }
+    @Published var isMonitoring: Bool = true {  // Default ON so user can hear audio
+        didSet { updateGains() }
+    }
     @Published private(set) var inputLevel: Float = 0.0
+    @Published private(set) var microphonePermission: MicrophonePermission = .notDetermined
     @Published private(set) var outputLevel: Float = 0.0
     @Published var bufferSize: Int = 256
     @Published var sampleRate: Double = 48000
@@ -61,7 +75,7 @@ class AudioEngine: ObservableObject {
     private var engine: AVAudioEngine?
     private var inputNode: AVAudioInputNode?
     private var outputNode: AVAudioOutputNode?
-    private var mixerNode: AVAudioMixerNode?
+    private var mainMixerNode: AVAudioMixerNode?  // Use the engine's built-in mixer
     private var playerNode: AVAudioPlayerNode?
     
     // For plugin chain
@@ -78,11 +92,21 @@ class AudioEngine: ObservableObject {
     
     private init() {
         setupEngine()
-        // Defer refreshDevices to avoid publishing during view updates
-        // when the singleton is first accessed from a SwiftUI view
+        // Defer refreshDevices and auto-start to avoid publishing during view updates
         Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(50))
+            try? await Task.sleep(for: .milliseconds(100))
             self.refreshDevices()
+            
+            // Auto-start the engine so user can hear audio immediately
+            try? await Task.sleep(for: .milliseconds(200))
+            if self.selectedInputDevice != nil && self.selectedOutputDevice != nil {
+                do {
+                    try await self.start()
+                    print("🎸 Audio engine auto-started")
+                } catch {
+                    print("⚠️ Auto-start failed: \(error.localizedDescription)")
+                }
+            }
         }
     }
     
@@ -110,10 +134,60 @@ class AudioEngine: ObservableObject {
         }
     }
     
+    /// Requests microphone permission
+    func requestMicrophonePermission() async -> Bool {
+        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        case .authorized:
+            microphonePermission = .granted
+            return true
+        case .denied, .restricted:
+            microphonePermission = .denied
+            return false
+        case .notDetermined:
+            let granted = await AVCaptureDevice.requestAccess(for: .audio)
+            microphonePermission = granted ? .granted : .denied
+            return granted
+        @unknown default:
+            return false
+        }
+    }
+    
+    /// Checks current microphone permission status
+    func checkMicrophonePermission() {
+        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        case .authorized:
+            microphonePermission = .granted
+        case .denied, .restricted:
+            microphonePermission = .denied
+        case .notDetermined:
+            microphonePermission = .notDetermined
+        @unknown default:
+            microphonePermission = .notDetermined
+        }
+    }
+    
     /// Starts the audio engine for live monitoring
-    func start() throws {
+    func start() async throws {
         guard let engine = engine else {
             throw AudioEngineError.engineNotInitialized
+        }
+        
+        // Don't start if already running
+        guard !isRunning else {
+            print("Audio engine already running")
+            return
+        }
+        
+        // Request microphone permission if not yet determined
+        checkMicrophonePermission()
+        if microphonePermission == .notDetermined {
+            print("📋 Requesting microphone permission...")
+            let granted = await requestMicrophonePermission()
+            if !granted {
+                throw AudioEngineError.microphonePermissionDenied
+            }
+        } else if microphonePermission == .denied {
+            throw AudioEngineError.microphonePermissionDenied
         }
         
         // Configure input/output devices
@@ -129,8 +203,11 @@ class AudioEngine: ObservableObject {
         try engine.start()
         isRunning = true
         
-        print("Audio engine started successfully")
-        print("Input: \(selectedInputDevice?.name ?? "Default"), Output: \(selectedOutputDevice?.name ?? "Default")")
+        print("✅ Audio engine started successfully")
+        print("   Input: \(selectedInputDevice?.name ?? "System Default")")
+        print("   Output: \(selectedOutputDevice?.name ?? "System Default")")
+        print("   Running: \(engine.isRunning)")
+        print("   Monitoring: \(isMonitoring ? "ON" : "OFF")")
     }
     
     /// Stops the audio engine
@@ -138,6 +215,21 @@ class AudioEngine: ObservableObject {
         engine?.stop()
         isRunning = false
         stopLevelMetering()
+    }
+    
+    /// Updates gain levels based on current settings
+    private func updateGains() {
+        guard let mixer = mainMixerNode else { return }
+        
+        // If monitoring is off, mute the output
+        if isMonitoring {
+            mixer.outputVolume = outputGain
+        } else {
+            mixer.outputVolume = 0.0
+        }
+        
+        // Note: inputGain would be applied via a gain node before effects
+        // For now we're just passing through directly
     }
     
     /// Loads a processing chain into the engine
@@ -186,7 +278,7 @@ class AudioEngine: ObservableObject {
         
         // Restart if was running
         if wasRunning {
-            try start()
+            try await start()
         }
         
         loadedAudioUnits = effectNodes
@@ -285,7 +377,7 @@ class AudioEngine: ObservableObject {
     func findNAMComponent() -> AVAudioUnitComponent? {
         let manager = AVAudioUnitComponentManager.shared()
         
-        // Search for NAM by name
+        // Search for all effect Audio Units
         let components = manager.components(matching: AudioComponentDescription(
             componentType: kAudioUnitType_Effect,
             componentSubType: 0,
@@ -294,30 +386,64 @@ class AudioEngine: ObservableObject {
             componentFlagsMask: 0
         ))
         
-        return components.first { component in
-            component.name.lowercased().contains("neural amp modeler") ||
-            component.name.lowercased().contains("nam")
+        // Look for NAM by various possible names
+        let namComponent = components.first { component in
+            let name = component.name.lowercased()
+            let manufacturer = component.manufacturerName.lowercased()
+            
+            // Check for various NAM naming conventions
+            if name.contains("neural amp modeler") { return true }
+            if name.contains("neuralampmodeler") { return true }
+            if name == "nam" { return true }
+            if manufacturer.contains("steven atkinson") { return true }
+            if manufacturer.contains("sdatkinson") { return true }
+            
+            return false
         }
+        
+        if let found = namComponent {
+            print("Found NAM component: \(found.name) by \(found.manufacturerName)")
+        } else {
+            print("NAM component not found. Available effects: \(components.map { $0.name }.prefix(10))")
+        }
+        
+        return namComponent
     }
     
     // MARK: - Private Methods
     
     private func setupEngine() {
         engine = AVAudioEngine()
-        mixerNode = AVAudioMixerNode()
         
-        guard let engine = engine, let mixer = mixerNode else { return }
+        guard let engine = engine else { return }
         
-        engine.attach(mixer)
-        
+        // Use the engine's built-in nodes - this is the key pattern from LAUncher
         inputNode = engine.inputNode
         outputNode = engine.outputNode
+        mainMixerNode = engine.mainMixerNode  // Built-in mixer, already connected to output
         
-        // Build the initial audio chain (direct monitoring with no effects)
-        do {
-            try rebuildAudioChain()
-        } catch {
-            print("Failed to build initial audio chain: \(error)")
+        // Configure main mixer to output connection (ensure it's connected)
+        configureMainMixerConnection()
+        
+        // Prepare engine but don't start yet (wait for user to click start)
+        engine.prepare()
+        
+        print("Audio engine initialized")
+        print("   Main mixer connected to output: \(engine.outputConnectionPoints(for: engine.mainMixerNode, outputBus: 0).count > 0)")
+    }
+    
+    /// Ensures the main mixer is properly connected to the output node
+    private func configureMainMixerConnection() {
+        guard let engine = engine else { return }
+        
+        let output = engine.outputNode
+        let mainMixer = engine.mainMixerNode
+        let format = output.inputFormat(forBus: 0)
+        
+        // Check if connection already exists
+        let existingConnections = engine.outputConnectionPoints(for: mainMixer, outputBus: 0)
+        if !existingConnections.contains(where: { $0.node == output }) {
+            engine.connect(mainMixer, to: output, format: format.channelCount > 0 ? format : nil)
         }
     }
     
@@ -654,43 +780,47 @@ class AudioEngine: ObservableObject {
     private func rebuildAudioChain() throws {
         guard let engine = engine,
               let inputNode = inputNode,
-              let mixer = mixerNode,
-              let outputNode = outputNode else {
+              let mixer = mainMixerNode else {
             throw AudioEngineError.engineNotInitialized
         }
         
         // Remove existing taps before disconnecting
         removeLevelMetering()
         
-        // Disconnect everything first
-        engine.disconnectNodeInput(mixer)
-        engine.disconnectNodeOutput(mixer)
+        // Disconnect input and effects from mixer (but leave mixer -> output intact)
+        // The mainMixerNode -> outputNode connection is maintained by the engine
         for effect in effectNodes {
             engine.disconnectNodeInput(effect)
             engine.disconnectNodeOutput(effect)
         }
         
-        // Get the hardware input format - this is critical for proper audio flow
-        let hardwareFormat = inputNode.inputFormat(forBus: 0)
-        let outputHardwareFormat = outputNode.outputFormat(forBus: 0)
+        // Disconnect any existing connections TO the mixer
+        // Get the input bus count and disconnect each if needed
+        for bus in 0..<mixer.numberOfInputs {
+            engine.disconnectNodeInput(mixer, bus: bus)
+        }
         
-        // Use a common format that works for all nodes
-        // Prefer the hardware format, fall back to standard format
+        // Get the input node's OUTPUT format (what it sends to the graph)
+        let inputNodeFormat = inputNode.outputFormat(forBus: 0)
+        
+        // Use the input's native format for processing
+        // AVAudioEngine handles format conversion automatically
         let processingFormat: AVAudioFormat
-        if hardwareFormat.sampleRate > 0 && hardwareFormat.channelCount > 0 {
-            processingFormat = hardwareFormat
+        if inputNodeFormat.sampleRate > 0 && inputNodeFormat.channelCount > 0 {
+            processingFormat = inputNodeFormat
         } else {
-            // Fallback to a standard format
+            // Fallback to standard stereo format
             processingFormat = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 2)!
         }
         
         print("Audio chain format: \(processingFormat.sampleRate)Hz, \(processingFormat.channelCount) channels")
+        print("Input node native format: \(inputNodeFormat.sampleRate)Hz, \(inputNodeFormat.channelCount) channels")
         
         if effectNodes.isEmpty {
-            // Direct monitoring: input -> mixer -> output
+            // Direct monitoring: input -> mainMixer (mainMixer -> output is automatic)
             engine.connect(inputNode, to: mixer, format: processingFormat)
         } else {
-            // Chain: input -> effect1 -> effect2 -> ... -> mixer
+            // Chain: input -> effect1 -> effect2 -> ... -> mainMixer
             var previousNode: AVAudioNode = inputNode
             
             for effectNode in effectNodes {
@@ -701,21 +831,23 @@ class AudioEngine: ObservableObject {
             engine.connect(previousNode, to: mixer, format: processingFormat)
         }
         
-        // Mixer -> output
-        engine.connect(mixer, to: outputNode, format: processingFormat)
+        // Ensure mainMixer -> output connection exists
+        configureMainMixerConnection()
         
-        // Apply gains
-        mixer.outputVolume = outputGain
+        // Apply gains based on monitoring state
+        updateGains()
         
         // Install audio taps for real level metering
         installLevelMetering()
         
         print("Audio chain rebuilt successfully")
+        print("   Monitoring: \(isMonitoring ? "ON" : "OFF")")
+        print("   Output volume: \(mixer.outputVolume)")
     }
     
     /// Installs audio taps on input and output for real RMS level metering
     private func installLevelMetering() {
-        guard let inputNode = inputNode, let mixer = mixerNode else { return }
+        guard let inputNode = inputNode, let mixer = mainMixerNode else { return }
         
         // Use the actual connected format (outputFormat after connection)
         let inputFormat = inputNode.outputFormat(forBus: 0)
@@ -800,7 +932,7 @@ class AudioEngine: ObservableObject {
     /// Removes level metering taps
     private func removeLevelMetering() {
         inputNode?.removeTap(onBus: 0)
-        mixerNode?.removeTap(onBus: 0)
+        mainMixerNode?.removeTap(onBus: 0)
         inputLevelRMS = 0
         outputLevelRMS = 0
     }
@@ -837,6 +969,7 @@ enum AudioEngineError: LocalizedError {
     case audioUnitLoadFailed
     case fileNotFound(String)
     case chainLoadFailed(String)
+    case microphonePermissionDenied
     
     var errorDescription: String? {
         switch self {
@@ -850,6 +983,8 @@ enum AudioEngineError: LocalizedError {
             return "File not found: \(path)"
         case .chainLoadFailed(let reason):
             return "Failed to load chain: \(reason)"
+        case .microphonePermissionDenied:
+            return "Microphone permission denied. Please grant access in System Preferences > Security & Privacy > Microphone"
         }
     }
 }

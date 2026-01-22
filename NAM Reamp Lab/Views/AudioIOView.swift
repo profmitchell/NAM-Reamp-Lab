@@ -18,16 +18,11 @@ struct AudioIOView: View {
     
     var body: some View {
         VStack(spacing: 0) {
-            // Top toolbar with transport controls
-            transportBar
-            
-            Divider()
-            
-            // Main content
+            // Main content - everything in one row
             HStack(spacing: 0) {
-                // Left: Device selection
+                // Left: START button and Device selection
                 devicePanel
-                    .frame(width: 280)
+                    .frame(width: 300)
                 
                 Divider()
                 
@@ -42,7 +37,7 @@ struct AudioIOView: View {
                     .frame(width: 280)
             }
         }
-        .frame(height: 180)
+        .frame(height: 200)
         .background(Color(NSColor.controlBackgroundColor))
         .alert("Audio Error", isPresented: $showingError) {
             Button("OK") { }
@@ -58,18 +53,23 @@ struct AudioIOView: View {
     
     private var transportBar: some View {
         HStack(spacing: 16) {
-            // Play/Stop button
+            // PROMINENT Play/Stop button
             Button {
                 toggleEngine()
             } label: {
-                Image(systemName: audioEngine.isRunning ? "stop.fill" : "play.fill")
-                    .font(.title2)
-                    .foregroundColor(audioEngine.isRunning ? .red : .green)
+                HStack(spacing: 8) {
+                    Image(systemName: audioEngine.isRunning ? "stop.fill" : "play.fill")
+                        .font(.title2)
+                    Text(audioEngine.isRunning ? "STOP" : "START")
+                        .fontWeight(.bold)
+                }
+                .foregroundColor(.white)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+                .background(audioEngine.isRunning ? Color.red : Color.green)
+                .cornerRadius(8)
             }
             .buttonStyle(.plain)
-            .frame(width: 44, height: 44)
-            .background(Color(NSColor.controlBackgroundColor))
-            .cornerRadius(8)
             .help(audioEngine.isRunning ? "Stop Audio Engine" : "Start Audio Engine")
             
             // Status indicator
@@ -82,6 +82,19 @@ struct AudioIOView: View {
             }
             
             Spacer()
+            
+            // Monitoring toggle - PROMINENT
+            Toggle(isOn: $audioEngine.isMonitoring) {
+                HStack {
+                    Image(systemName: audioEngine.isMonitoring ? "speaker.wave.2.fill" : "speaker.slash.fill")
+                    Text(audioEngine.isMonitoring ? "Monitor ON" : "Monitor OFF")
+                }
+            }
+            .toggleStyle(.button)
+            .tint(audioEngine.isMonitoring ? .blue : .gray)
+            
+            Divider()
+                .frame(height: 24)
             
             // Buffer size
             HStack {
@@ -110,12 +123,6 @@ struct AudioIOView: View {
                 .pickerStyle(.menu)
                 .frame(width: 80)
             }
-            
-            // Monitoring toggle
-            Toggle(isOn: $audioEngine.isMonitoring) {
-                Label("Monitor", systemImage: "headphones")
-            }
-            .toggleStyle(.button)
         }
         .padding(.horizontal)
         .padding(.vertical, 8)
@@ -124,18 +131,47 @@ struct AudioIOView: View {
     // MARK: - Device Panel
     
     private var devicePanel: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Audio Devices")
-                .font(.headline)
-                .foregroundColor(.secondary)
+        VStack(alignment: .leading, spacing: 10) {
+            // BIG START BUTTON AT TOP
+            Button {
+                toggleEngine()
+            } label: {
+                HStack {
+                    Image(systemName: audioEngine.isRunning ? "stop.fill" : "play.fill")
+                        .font(.title2)
+                    Text(audioEngine.isRunning ? "STOP ENGINE" : "START ENGINE")
+                        .fontWeight(.bold)
+                    Spacer()
+                    Circle()
+                        .fill(audioEngine.isRunning ? Color.green : Color.gray)
+                        .frame(width: 12, height: 12)
+                }
+                .foregroundColor(.white)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .background(audioEngine.isRunning ? Color.red : Color.green)
+                .cornerRadius(8)
+            }
+            .buttonStyle(.plain)
+            
+            // Monitor toggle
+            Toggle(isOn: $audioEngine.isMonitoring) {
+                Label(audioEngine.isMonitoring ? "Monitoring ON" : "Monitoring OFF", 
+                      systemImage: audioEngine.isMonitoring ? "speaker.wave.2.fill" : "speaker.slash")
+            }
+            .toggleStyle(.switch)
+            .tint(.blue)
+            
+            Divider()
             
             // Input device
-            VStack(alignment: .leading, spacing: 4) {
+            HStack {
                 Label("Input", systemImage: "mic")
                     .font(.caption)
                     .foregroundColor(.secondary)
+                    .frame(width: 60, alignment: .leading)
                 
-                Picker("Input", selection: $audioEngine.selectedInputDevice) {
+                Picker("", selection: $audioEngine.selectedInputDevice) {
                     Text("None").tag(nil as AudioDeviceInfo?)
                     ForEach(audioEngine.inputDevices) { device in
                         Text(device.name).tag(device as AudioDeviceInfo?)
@@ -146,12 +182,13 @@ struct AudioIOView: View {
             }
             
             // Output device
-            VStack(alignment: .leading, spacing: 4) {
+            HStack {
                 Label("Output", systemImage: "speaker.wave.2")
                     .font(.caption)
                     .foregroundColor(.secondary)
+                    .frame(width: 60, alignment: .leading)
                 
-                Picker("Output", selection: $audioEngine.selectedOutputDevice) {
+                Picker("", selection: $audioEngine.selectedOutputDevice) {
                     Text("None").tag(nil as AudioDeviceInfo?)
                     ForEach(audioEngine.outputDevices) { device in
                         Text(device.name).tag(device as AudioDeviceInfo?)
@@ -160,15 +197,6 @@ struct AudioIOView: View {
                 .pickerStyle(.menu)
                 .labelsHidden()
             }
-            
-            // Refresh button
-            Button {
-                audioEngine.refreshDevices()
-            } label: {
-                Label("Refresh", systemImage: "arrow.clockwise")
-                    .font(.caption)
-            }
-            .buttonStyle(.borderless)
             
             Spacer()
         }
@@ -277,11 +305,13 @@ struct AudioIOView: View {
         if audioEngine.isRunning {
             audioEngine.stop()
         } else {
-            do {
-                try audioEngine.start()
-            } catch {
-                errorMessage = error.localizedDescription
-                showingError = true
+            Task {
+                do {
+                    try await audioEngine.start()
+                } catch {
+                    errorMessage = error.localizedDescription
+                    showingError = true
+                }
             }
         }
     }

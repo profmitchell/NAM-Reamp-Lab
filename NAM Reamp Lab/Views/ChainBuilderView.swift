@@ -490,9 +490,9 @@ struct ChainBuilderView: View {
             for (index, outputURL) in outputURLs.enumerated() {
                 let chainName = chainManager.enabledChains[safe: index]?.name ?? "Chain \(index + 1)"
                 trainer.createJob(
-                    name: chainName,
-                    inputFile: inputURL,
-                    outputFile: outputURL
+                    inputFilePath: inputURL.path,
+                    outputFilePath: outputURL.path,
+                    chainName: chainName
                 )
             }
             
@@ -729,7 +729,6 @@ struct PluginRowView: View {
         // Show the Audio Unit UI in a floating window
         Task {
             guard index < audioEngine.loadedAudioUnits.count else { return }
-            let audioUnit = audioEngine.loadedAudioUnits[index]
             
             if let viewController = await audioEngine.getAudioUnitViewController(at: index) {
                 await MainActor.run {

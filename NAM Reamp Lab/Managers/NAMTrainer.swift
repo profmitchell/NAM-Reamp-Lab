@@ -203,21 +203,24 @@ class NAMTrainer: ObservableObject {
                     
                     currentProcess = process
                     
+                    // Capture self for use in handlers
+                    let trainer = self
+                    
                     // Handle output for progress parsing
-                    outputPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
+                    outputPipe.fileHandleForReading.readabilityHandler = { handle in
                         let data = handle.availableData
                         if let output = String(data: data, encoding: .utf8), !output.isEmpty {
                             Task { @MainActor in
-                                self?.parseTrainingOutput(output, for: job)
+                                trainer.parseTrainingOutput(output, for: job)
                             }
                         }
                     }
                     
-                    errorPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
+                    errorPipe.fileHandleForReading.readabilityHandler = { handle in
                         let data = handle.availableData
                         if let output = String(data: data, encoding: .utf8), !output.isEmpty {
                             Task { @MainActor in
-                                self?.parseTrainingOutput(output, for: job)
+                                trainer.parseTrainingOutput(output, for: job)
                             }
                         }
                     }

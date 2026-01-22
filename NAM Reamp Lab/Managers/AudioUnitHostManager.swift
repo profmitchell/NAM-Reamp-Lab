@@ -374,13 +374,25 @@ class AudioUnitHostManager: ObservableObject {
             componentFlagsMask: 0
         ))
         
-        return components.first { component in
+        let namComponent = components.first { component in
             let name = component.name.lowercased()
-            return name.contains("neural amp modeler") || 
-                   name == "nam" || 
-                   name.hasPrefix("nam ") || 
-                   name.hasSuffix(" nam")
+            let manufacturer = component.manufacturerName.lowercased()
+            
+            // Check for various NAM naming conventions
+            if name.contains("neural amp modeler") { return true }
+            if name.contains("neuralampmodeler") { return true }
+            if name == "nam" { return true }
+            if manufacturer.contains("steven atkinson") { return true }
+            if manufacturer.contains("sdatkinson") { return true }
+            
+            return false
         }
+        
+        if let found = namComponent {
+            print("Found NAM component: \(found.name) by \(found.manufacturerName)")
+        }
+        
+        return namComponent
     }
     
     private func processWithAudioUnit(_ buffer: AVAudioPCMBuffer, description: AudioComponentDescription) async throws -> AVAudioPCMBuffer {
