@@ -1,0 +1,152 @@
+# Xcode
+## Build generated
+build/
+DerivedData/
+*.pbxuser
+!default.pbxuser
+*.mode1v3
+!default.mode1v3
+*.mode2v3
+!default.mode2v3
+*.perspectivev3
+!default.perspectivev3
+xcuserdata/
+
+## Xcode patch
+*.xcodeproj/*
+!*.xcodeproj/project.pbxproj
+!*.xcodeproj/xcshareddata/
+!*.xcodeproj/project.xcworkspace/
+
+## Other
+*.moved-aside
+*.xccheckout
+*.xcscmblueprint
+
+## Obj-C/Swift specific
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+## Playgrounds
+timeline.xctimeline
+playground.xcworkspace
+
+## Swift Package Manager
+.build/
+Packages/
+Package.resolved
+*.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/
+.swiftpm/
+
+# CocoaPods
+Pods/
+*.xcworkspace
+!*.xcodeproj/project.xcworkspace
+
+# Carthage
+Carthage/Build/
+Carthage/Checkouts/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+ENV/
+env/
+.env
+*.egg-info/
+dist/
+build/
+eggs/
+*.egg
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# PyTorch / NAM Training
+*.pt
+*.pth
+*.ckpt
+lightning_logs/
+wandb/
+
+# IDEs
+.idea/
+*.swp
+*.swo
+*~
+.vscode/
+*.sublime-project
+*.sublime-workspace
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+.fseventsd
+
+# Thumbnails
+Thumbs.db
+ehthumbs.db
+
+# Archives
+*.zip
+*.tar.gz
+*.rar
+*.7z
+
+# Audio files (optional - uncomment if you don't want to track test audio)
+# *.wav
+# *.mp3
+# *.aiff
+# *.flac
+# *.nam
+
+# Large model files
+*.nam
+*.onnx
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+*.tmp
+*.temp
+tmp/
+temp/
+
+# Secrets / Config
+.env.local
+.env.*.local
+secrets.json
+config.local.json
+
+# Build artifacts
+*.app
+*.ipa
+*.framework
+*.dylib
+
+# Test outputs
+test_output/
+coverage/
+.coverage
+
+# Neural Amp Modeler specific
+neural-amp-modeler-main/
+NeuralAmpModelerCore-main-2/
+NeuralAmpModelerPlugin-main-2/
+PythonKit-master/
