@@ -56,7 +56,7 @@ struct AudioPlugin: Identifiable, Codable, Equatable {
 }
 
 /// Codable wrapper for AudioComponentDescription
-struct AudioComponentDescriptionCodable: Codable, Equatable {
+struct AudioComponentDescriptionCodable: Codable, Equatable, Hashable {
     var componentType: UInt32
     var componentSubType: UInt32
     var componentManufacturer: UInt32

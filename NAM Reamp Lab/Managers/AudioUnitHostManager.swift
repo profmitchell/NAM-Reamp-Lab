@@ -542,6 +542,12 @@ class AudioUnitHostManager: ObservableObject {
     }
     
     private func processWithImpulseResponse(_ buffer: AVAudioPCMBuffer, irPath: String) async throws -> AVAudioPCMBuffer {
+        if AppSettings.shared.usePreferredIRLoader,
+           let irLoaderDesc = AppSettings.shared.preferredIRLoader {
+            print("   Using Preferred IR Loader AU: \(irPath.components(separatedBy: "/").last ?? "")")
+            return try await processWithIRAudioUnit(buffer, description: irLoaderDesc.toAudioComponentDescription(), irPath: irPath)
+        }
+
         // Load the impulse response file
         guard FileManager.default.fileExists(atPath: irPath) else {
             throw AudioUnitError.fileNotFound(irPath)
@@ -638,6 +644,65 @@ class AudioUnitHostManager: ObservableObject {
         }
         
         return finalBuffer
+    }
+    
+    /// Processes using a dedicated AU for IR loading
+    private func processWithIRAudioUnit(_ buffer: AVAudioPCMBuffer, description: AudioComponentDescription, irPath: String) async throws -> AVAudioPCMBuffer {
+        guard FileManager.default.fileExists(atPath: irPath) else {
+            throw AudioUnitError.fileNotFound(irPath)
+        }
+        
+        // For offline rendering
+        let options: AudioComponentInstantiationOptions = []
+        
+        let audioUnit = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<AVAudioUnit, Error>) in
+            AVAudioUnit.instantiate(with: description, options: options) { unit, error in
+                if let error = error {
+                    continuation.resume(throwing: error)
+                } else if let unit = unit {
+                    continuation.resume(returning: unit)
+                } else {
+                    continuation.resume(throwing: AudioUnitError.loadFailed("IR Loader", "Failed to instantiate"))
+                }
+            }
+        }
+        
+        // Try to load the IR file into the AU state
+        // We attempt common keys used by plugins (including our NAM plugin)
+        var state = audioUnit.auAudioUnit.fullState ?? [:]
+        state["IRPath"] = irPath          // NAM Plugin key
+        state["impulseResponse"] = irPath
+        state["irFile"] = irPath
+        state["file"] = irPath
+        state["path"] = irPath
+        audioUnit.auAudioUnit.fullState = state
+        
+        // Process offline
+        let engine = AVAudioEngine()
+        let player = AVAudioPlayerNode()
+        
+        engine.attach(player)
+        engine.attach(audioUnit)
+        
+        engine.connect(player, to: audioUnit, format: buffer.format)
+        engine.connect(audioUnit, to: engine.mainMixerNode, format: buffer.format)
+        
+        try engine.enableManualRenderingMode(.offline, format: buffer.format, maximumFrameCount: buffer.frameLength)
+        try engine.start()
+        player.play()
+        player.scheduleBuffer(buffer, completionHandler: nil)
+        
+        guard let outputBuffer = AVAudioPCMBuffer(pcmFormat: buffer.format, frameCapacity: buffer.frameLength) else {
+            throw AudioUnitError.bufferCreationFailed
+        }
+        
+        let status = try engine.renderOffline(buffer.frameLength, to: outputBuffer)
+        guard status == .success else {
+            throw AudioUnitError.renderFailed
+        }
+        
+        engine.stop()
+        return outputBuffer
     }
 }
 

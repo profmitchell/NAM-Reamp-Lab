@@ -306,6 +306,29 @@ struct SettingsView: View {
                     Spacer()
                 }
             }
+            
+            // IR Loader Preference
+            Divider()
+            
+            Toggle("Use Preferred IR Loader AU", isOn: $settings.usePreferredIRLoader)
+            
+            if settings.usePreferredIRLoader {
+                 Picker("IR Loader Plugin", selection: $settings.preferredIRLoader) {
+                    Text("Select a Plugin...").tag(Optional<AudioComponentDescriptionCodable>.none)
+                    
+                    ForEach(audioUnitManager.availableAudioUnits) { au in
+                        Text(au.name)
+                            .tag(Optional(AudioComponentDescriptionCodable(from: au.componentDescription)))
+                    }
+                }
+                .pickerStyle(.menu)
+                
+                if settings.preferredIRLoader != nil {
+                    Text("This AU will be used when adding Impulse Responses.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            }
         } header: {
             Label("Audio Units", systemImage: "square.stack.3d.up")
         } footer: {

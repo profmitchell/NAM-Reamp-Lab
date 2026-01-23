@@ -29,6 +29,8 @@ class AppSettings: ObservableObject {
         static let previewBufferSize = "previewBufferSize"
         static let recentInputFiles = "recentInputFiles"
         static let lastUsedChainId = "lastUsedChainId"
+        static let preferredIRLoader = "preferredIRLoader"
+        static let usePreferredIRLoader = "usePreferredIRLoader"
     }
     
     // MARK: - Python Settings
@@ -88,6 +90,22 @@ class AppSettings: ObservableObject {
     @Published var lastUsedChainId: String? {
         didSet { defaults.set(lastUsedChainId, forKey: Keys.lastUsedChainId) }
     }
+
+    // MARK: - Plugins
+    
+    @Published var preferredIRLoader: AudioComponentDescriptionCodable? {
+        didSet {
+            if let loader = preferredIRLoader, let data = try? JSONEncoder().encode(loader) {
+                defaults.set(data, forKey: Keys.preferredIRLoader)
+            } else {
+                defaults.removeObject(forKey: Keys.preferredIRLoader)
+            }
+        }
+    }
+    
+    @Published var usePreferredIRLoader: Bool {
+        didSet { defaults.set(usePreferredIRLoader, forKey: Keys.usePreferredIRLoader) }
+    }
     
     // MARK: - Initialization
     
@@ -138,6 +156,14 @@ class AppSettings: ObservableObject {
         // Recent files - must initialize before using self
         self.recentInputFiles = defaults.stringArray(forKey: Keys.recentInputFiles) ?? []
         self.lastUsedChainId = defaults.string(forKey: Keys.lastUsedChainId)
+
+        // Load IR Loader settings
+        self.usePreferredIRLoader = defaults.bool(forKey: Keys.usePreferredIRLoader)
+        if let data = defaults.data(forKey: Keys.preferredIRLoader) {
+            self.preferredIRLoader = try? JSONDecoder().decode(AudioComponentDescriptionCodable.self, from: data)
+        } else {
+            self.preferredIRLoader = nil
+        }
     }
     
     // MARK: - Methods
