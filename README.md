@@ -6,6 +6,8 @@ A powerful macOS companion for **Neural Amp Modeler (NAM)**. Streamline your wor
 [![Swift](https://img.shields.io/badge/Swift-5.9+-F05138?style=for-the-badge&logo=swift&logoColor=white)](https://swift.org)
 [![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)](LICENSE)
 
+![Main Interface](Resources/Screenshots/main_interface.png)
+
 ---
 
 ## ❤️ Credits & Attribution
@@ -31,12 +33,15 @@ NAM Reamp Lab is designed for tone creators who want to capture their perfect "d
 ## ✨ Key Features
 
 ### 🛠️ Professional Chain Builder
+![Chain Builder](Resources/Screenshots/chain_builder.png)
 - **Universal AU Support**: Use any 3rd-party Audio Unit plugins (amp sims, delays, compressors).
+![Adding Plugins](Resources/Screenshots/add_plugins.png)
 - **Interactive Toggles**: Mark specific chains for batch processing directly in the sidebar.
 - **Deep Preset Management**: Plugin states are captured automatically during reamping.
 - **Real-time Monitoring**: High-performance audio engine with low latency.
 
 ### 🧠 Seamless Training Workflow
+![Training View](Resources/Screenshots/training_view.png)
 - **One-Click Batching**: "Process & Train" takes you from raw audio to a training queue instantly.
 - **GPU Accelerated**: Native support for Apple Silicon (M1/M2/M3) via Metal (MPS).
 - **Quality Analysis**: Real-time ESR tracking with color-coded quality bands.
