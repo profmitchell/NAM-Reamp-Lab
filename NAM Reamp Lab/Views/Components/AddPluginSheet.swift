@@ -125,30 +125,49 @@ struct AddPluginSheet: View {
     }
     
     private var namModelsList: some View {
-        VStack {
+        VStack(spacing: 0) {
+            let modelFolder = URL(fileURLWithPath: AppSettings.shared.defaultModelFolder)
+            
+            if FileManager.default.fileExists(atPath: modelFolder.path) {
+                FileBrowserView(rootURL: modelFolder, fileExtension: "nam") { url in
+                    if let chain = chain {
+                        let plugin = AudioPlugin(
+                            name: url.deletingPathExtension().lastPathComponent,
+                            type: .nam,
+                            path: url.path
+                        )
+                        chainManager.addPlugin(plugin, to: chain)
+                    }
+                }
+            } else {
+                VStack(spacing: 20) {
+                    Spacer()
+                    Image(systemName: "folder.badge.questionmark")
+                        .font(.system(size: 48))
+                        .foregroundColor(.secondary)
+                    Text("Default model folder not found")
+                        .font(.headline)
+                    Text(modelFolder.path)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    Button("Select Folder in Settings") {
+                        // Ideally link to settings
+                    }
+                    .buttonStyle(.bordered)
+                    Spacer()
+                }
+            }
+            
+            Divider()
+            
             Button {
                 openNAMModelPicker()
             } label: {
-                Label("Browse for NAM Models...", systemImage: "folder")
+                Label("Browse for other NAM Models...", systemImage: "folder")
                     .frame(maxWidth: .infinity)
             }
-            .buttonStyle(.bordered)
-            .padding()
-            
-            Spacer()
-            
-            VStack(spacing: 8) {
-                Image(systemName: "waveform.badge.mic")
-                    .font(.largeTitle)
-                    .foregroundColor(.purple)
-                Text("Select .nam model files to add to the chain")
-                    .foregroundColor(.secondary)
-                Text("These models will be loaded into the NAM Audio Unit")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
-            
-            Spacer()
+            .buttonStyle(.plain)
+            .padding(10)
         }
     }
     

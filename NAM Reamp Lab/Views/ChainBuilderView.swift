@@ -125,8 +125,38 @@ struct ChainBuilderView: View {
             
             // Chain list
             List(selection: $chainManager.selectedChainId) {
-                Section("Processing Chains") {
-                    ForEach(chainManager.chains) { chain in
+                // Favorites Group
+                let favorites = chainManager.chains.filter { chain in 
+                    chain.plugins.contains(where: { $0.isFavorite })
+                }
+                
+                if !favorites.isEmpty {
+                    Section("Favorites") {
+                        ForEach(favorites) { chain in
+                            ChainRowView(chain: chain)
+                                .tag(chain.id)
+                        }
+                    }
+                }
+                
+                let groups = chainManager.availableGroups
+                
+                // Grouped Chains
+                ForEach(groups, id: \.self) { group in
+                    Section(group) {
+                        ForEach(chainManager.chains.filter { $0.groupName == group }) { chain in
+                            ChainRowView(chain: chain)
+                                .tag(chain.id)
+                                .contextMenu {
+                                    chainContextMenu(for: chain)
+                                }
+                        }
+                    }
+                }
+                
+                // Ungrouped Chains
+                Section("All Chains") {
+                    ForEach(chainManager.chains.filter { $0.groupName == nil }) { chain in
                         ChainRowView(chain: chain)
                             .tag(chain.id)
                             .contextMenu {
@@ -301,6 +331,33 @@ struct ChainBuilderView: View {
             exportChain(chain)
         } label: {
             Label("Save Chain...", systemImage: "square.and.arrow.down")
+        }
+        
+        Menu {
+            Button("None") {
+                chainManager.updateChainGroup(chain, to: nil)
+            }
+            Divider()
+            ForEach(chainManager.availableGroups, id: \.self) { group in
+                Button(group) {
+                    chainManager.updateChainGroup(chain, to: group)
+                }
+            }
+            Divider()
+            Button("New Group...") {
+                // We'd ideally show an alert here, but for now we can just use a prompt
+                let alert = NSAlert()
+                alert.messageText = "New Group Name"
+                alert.addButton(withTitle: "Create")
+                alert.addButton(withTitle: "Cancel")
+                let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 200, height: 24))
+                alert.accessoryView = input
+                if alert.runModal() == .alertFirstButtonReturn {
+                    chainManager.updateChainGroup(chain, to: input.stringValue)
+                }
+            }
+        } label: {
+            Label("Move to Group", systemImage: "folder")
         }
         
         Button {

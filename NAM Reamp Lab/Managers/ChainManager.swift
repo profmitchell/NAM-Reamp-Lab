@@ -19,6 +19,7 @@ class ChainManager: ObservableObject {
     @Published var chains: [ProcessingChain] = []
     @Published var selectedChainId: UUID?
     @Published private(set) var isProcessing: Bool = false
+    @Published private(set) var isEngineLoading: Bool = false
     @Published private(set) var processingProgress: Double = 0.0
     @Published private(set) var currentProcessingChain: String = ""
     @Published var inputFileURL: URL?
@@ -148,6 +149,19 @@ class ChainManager: ObservableObject {
         }
     }
     
+    /// Updates the group name for a chain
+    func updateChainGroup(_ chain: ProcessingChain, to newGroup: String?) {
+        if let index = chains.firstIndex(where: { $0.id == chain.id }) {
+            chains[index].groupName = newGroup?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == true ? nil : newGroup
+            saveChains()
+        }
+    }
+    
+    /// Returns unique group names used across all chains
+    var availableGroups: [String] {
+        Array(Set(chains.compactMap { $0.groupName })).sorted()
+    }
+    
     // MARK: - Plugin Management
     
     /// Adds a plugin to the selected chain
@@ -155,6 +169,20 @@ class ChainManager: ObservableObject {
         if let index = chains.firstIndex(where: { $0.id == chain.id }) {
             chains[index].plugins.append(plugin)
             chains[index].modifiedAt = Date()
+            
+            // Trigger engine reload if it's the selected chain
+            if selectedChainId == chain.id {
+                Task {
+                    isEngineLoading = true
+                    do {
+                        try await AudioEngine.shared.loadChain(chains[index])
+                        print("✅ Engine reloaded after adding plugin: \(plugin.name)")
+                    } catch {
+                        print("❌ Failed to reload engine after adding plugin: \(error)")
+                    }
+                    isEngineLoading = false
+                }
+            }
         }
     }
     
@@ -164,6 +192,19 @@ class ChainManager: ObservableObject {
            let pluginIndex = chains[chainIndex].plugins.firstIndex(where: { $0.id == plugin.id }) {
             chains[chainIndex].plugins.remove(at: pluginIndex)
             chains[chainIndex].modifiedAt = Date()
+            
+            // Trigger engine reload if it's the selected chain
+            if selectedChainId == chain.id {
+                Task {
+                    isEngineLoading = true
+                    do {
+                        try await AudioEngine.shared.loadChain(chains[chainIndex])
+                    } catch {
+                        print("❌ Failed to reload engine after removing plugin: \(error)")
+                    }
+                    isEngineLoading = false
+                }
+            }
         }
     }
     
@@ -172,6 +213,15 @@ class ChainManager: ObservableObject {
         if let index = chains.firstIndex(where: { $0.id == chain.id }) {
             chains[index].plugins.move(fromOffsets: source, toOffset: destination)
             chains[index].modifiedAt = Date()
+            
+            // Reload if selected
+            if selectedChainId == chain.id {
+                Task {
+                    isEngineLoading = true
+                    try? await AudioEngine.shared.loadChain(chains[index])
+                    isEngineLoading = false
+                }
+            }
         }
     }
     
@@ -181,6 +231,15 @@ class ChainManager: ObservableObject {
            let pluginIndex = chains[chainIndex].plugins.firstIndex(where: { $0.id == plugin.id }) {
             chains[chainIndex].plugins[pluginIndex].isEnabled.toggle()
             chains[chainIndex].modifiedAt = Date()
+            
+            // Reload if selected
+            if selectedChainId == chain.id {
+                Task {
+                    isEngineLoading = true
+                    try? await AudioEngine.shared.loadChain(chains[chainIndex])
+                    isEngineLoading = false
+                }
+            }
         }
     }
     
@@ -190,6 +249,24 @@ class ChainManager: ObservableObject {
            let pluginIndex = chains[chainIndex].plugins.firstIndex(where: { $0.id == plugin.id }) {
             chains[chainIndex].plugins[pluginIndex].isBypassed.toggle()
             chains[chainIndex].modifiedAt = Date()
+            
+            // Reload if selected
+            if selectedChainId == chain.id {
+                Task {
+                    isEngineLoading = true
+                    try? await AudioEngine.shared.loadChain(chains[chainIndex])
+                    isEngineLoading = false
+                }
+            }
+        }
+    }
+    
+    /// Toggles a plugin's favorite state
+    func toggleFavorite(_ plugin: AudioPlugin, in chain: ProcessingChain) {
+        if let chainIndex = chains.firstIndex(where: { $0.id == chain.id }),
+           let pluginIndex = chains[chainIndex].plugins.firstIndex(where: { $0.id == plugin.id }) {
+            chains[chainIndex].plugins[pluginIndex].isFavorite.toggle()
+            saveChains()
         }
     }
     
@@ -308,7 +385,7 @@ class ChainManager: ObservableObject {
     /// Saves chains to disk, capturing current plugin states
     /// Set skipCapture to true when states are already up to date (e.g., during processing)
     func saveChains(skipCapture: Bool = false) {
-        // Skip during training to avoid AU reload spam
+        // Skip during training, processing, or when engine is loading to avoid corruption
         guard !NAMTrainer.shared.isTraining else {
             // Just save without capturing during training
             do {
@@ -320,8 +397,8 @@ class ChainManager: ObservableObject {
             return
         }
         
-        // Capture current plugin states from the audio engine before saving
-        if !skipCapture {
+        // Skip capture if engine is loading or if requested
+        if !skipCapture && !isEngineLoading && !isProcessing {
             captureCurrentChainState()
         }
         
@@ -392,9 +469,10 @@ class ChainManager: ObservableObject {
             .sink { [weak self] _ in
                 guard let self = self else { return }
                 
-                // Skip auto-save during training or processing to prevent AU reloading spam
+                // Skip auto-save during training, processing, or engine loading
                 guard !NAMTrainer.shared.isTraining else { return }
                 guard !self.isProcessing else { return }
+                guard !self.isEngineLoading else { return }
                 
                 if AppSettings.shared.autoSaveChains {
                     self.saveChains()

@@ -9,10 +9,18 @@ import Foundation
 import AVFoundation
 
 /// Types of audio plugins supported by the app
-enum PluginType: String, Codable, CaseIterable {
-    case nam = "NAM Model"
-    case audioUnit = "Audio Unit"
-    case impulseResponse = "Impulse Response"
+enum PluginType: Int, Codable, CaseIterable {
+    case nam = 0
+    case audioUnit = 1
+    case impulseResponse = 2
+    
+    var name: String {
+        switch self {
+        case .nam: return "NAM Model"
+        case .audioUnit: return "Audio Unit"
+        case .impulseResponse: return "Impulse Response"
+        }
+    }
     
     var icon: String {
         switch self {
@@ -34,6 +42,7 @@ struct AudioPlugin: Identifiable, Codable, Equatable {
     var nickname: String? // Optional nickname for the plugin
     var isEnabled: Bool
     var isBypassed: Bool
+    var isFavorite: Bool = false
     
     init(
         id: UUID = UUID(),
@@ -44,7 +53,8 @@ struct AudioPlugin: Identifiable, Codable, Equatable {
         presetData: Data? = nil,
         nickname: String? = nil,
         isEnabled: Bool = true,
-        isBypassed: Bool = false
+        isBypassed: Bool = false,
+        isFavorite: Bool = false
     ) {
         self.id = id
         self.name = name
@@ -55,6 +65,7 @@ struct AudioPlugin: Identifiable, Codable, Equatable {
         self.nickname = nickname
         self.isEnabled = isEnabled
         self.isBypassed = isBypassed
+        self.isFavorite = isFavorite
     }
 }
 

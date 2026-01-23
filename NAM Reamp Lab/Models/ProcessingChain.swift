@@ -16,6 +16,7 @@ struct ProcessingChain: Identifiable, Codable, Equatable {
     var plugins: [AudioPlugin]
     var createdAt: Date
     var modifiedAt: Date
+    var groupName: String? = nil
     
     init(
         id: UUID = UUID(),
@@ -23,7 +24,8 @@ struct ProcessingChain: Identifiable, Codable, Equatable {
         isEnabled: Bool = true,
         plugins: [AudioPlugin] = [],
         createdAt: Date = Date(),
-        modifiedAt: Date = Date()
+        modifiedAt: Date = Date(),
+        groupName: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -31,6 +33,7 @@ struct ProcessingChain: Identifiable, Codable, Equatable {
         self.plugins = plugins
         self.createdAt = createdAt
         self.modifiedAt = modifiedAt
+        self.groupName = groupName
     }
     
     /// Returns the output filename for this chain based on its name

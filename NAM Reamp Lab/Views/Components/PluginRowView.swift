@@ -12,6 +12,7 @@ struct PluginRowView: View {
     let onToggle: () -> Void
     let onBypass: () -> Void
     let onRemove: () -> Void
+    var onFavorite: (() -> Void)? = nil
     var onShowUI: (() -> Void)? = nil
     
     @StateObject private var audioEngine = AudioEngine.shared
@@ -62,7 +63,7 @@ struct PluginRowView: View {
                 }
                 
                 HStack(spacing: 8) {
-                    Text(plugin.type.rawValue)
+                    Text(plugin.type.name)
                         .font(.caption)
                         .foregroundColor(.secondary)
                     
@@ -87,6 +88,18 @@ struct PluginRowView: View {
                 }
                 .buttonStyle(.borderless)
                 .help("Open plugin UI")
+            }
+            
+            // Favorite button
+            if let onFavorite = onFavorite {
+                Button {
+                    onFavorite()
+                } label: {
+                    Image(systemName: plugin.isFavorite ? "star.fill" : "star")
+                        .foregroundColor(plugin.isFavorite ? .yellow : .secondary)
+                }
+                .buttonStyle(.borderless)
+                .help(plugin.isFavorite ? "Remove from favorites" : "Add to favorites")
             }
             
             // Bypass button

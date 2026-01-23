@@ -82,7 +82,8 @@ struct ChainDetailView: View {
                     index: index,
                     onToggle: { chainManager.togglePlugin(plugin, in: chain) },
                     onBypass: { chainManager.toggleBypass(plugin, in: chain) },
-                    onRemove: { chainManager.removePlugin(plugin, from: chain) }
+                    onRemove: { chainManager.removePlugin(plugin, from: chain) },
+                    onFavorite: { chainManager.toggleFavorite(plugin, in: chain) }
                 )
             }
             .onMove { source, destination in

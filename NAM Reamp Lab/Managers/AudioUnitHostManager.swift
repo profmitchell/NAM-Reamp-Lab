@@ -139,6 +139,13 @@ class AudioUnitHostManager: ObservableObject {
         
         // Sort by manufacturer, then name
         units.sort { 
+            // Put Neural Amp Modeler at the very top
+            let isName1NAM = $0.name.contains("NeuralAmpModeler")
+            let isName2NAM = $1.name.contains("NeuralAmpModeler")
+            
+            if isName1NAM && !isName2NAM { return true }
+            if !isName1NAM && isName2NAM { return false }
+            
             if $0.manufacturer != $1.manufacturer {
                 return $0.manufacturer < $1.manufacturer
             }
