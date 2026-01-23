@@ -105,14 +105,19 @@ Export your chains as `.namchain` files to share with others or backup your conf
 ```
 NAM Reamp Lab/
 ├── NAM Reamp Lab/          # Main app source
-│   ├── Audio/              # Audio engine and processing
+│   ├── Audio/              # Audio engine and modular logic
 │   ├── Managers/           # Business logic managers
 │   ├── Models/             # Data models
-│   └── Views/              # SwiftUI views
+│   └── Views/              # SwiftUI views and components
 ├── neural-amp-modeler-main/ # NAM Python package (training)
-├── NeuralAmpModelerCore/   # NAM C++ DSP core
-└── PythonKit/              # Swift-Python bridge
+└── ...
 ```
+
+### Modular Backend
+The core `AudioEngine` is modularized into specialized extensions for better readability:
+- **`AudioEngine+Plugins.swift`**: Handles complex AU and NAM plugin loading.
+- **`AudioEngine+Metering.swift`**: High-performance RMS metering using vDSP.
+- **`AudioEngine+Devices.swift`**: Hardware discovery and CoreAudio device configuration.
 
 ## Technical Details
 
