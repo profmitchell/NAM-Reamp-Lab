@@ -193,6 +193,16 @@ class ChainManager: ObservableObject {
         }
     }
     
+    /// Updates plugin nickname
+    func updatePluginNickname(_ plugin: AudioPlugin, in chain: ProcessingChain, nickname: String?) {
+        guard let chainIndex = chains.firstIndex(where: { $0.id == chain.id }) else { return }
+        guard let pluginIndex = chains[chainIndex].plugins.firstIndex(where: { $0.id == plugin.id }) else { return }
+        
+        chains[chainIndex].plugins[pluginIndex].nickname = nickname
+        objectWillChange.send()
+        saveChains()
+    }
+    
     // MARK: - Processing
     
     /// Processes all enabled chains

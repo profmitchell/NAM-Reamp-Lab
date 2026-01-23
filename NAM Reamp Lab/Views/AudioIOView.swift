@@ -87,11 +87,21 @@ struct AudioIOView: View {
             Toggle(isOn: $audioEngine.isMonitoring) {
                 HStack {
                     Image(systemName: audioEngine.isMonitoring ? "speaker.wave.2.fill" : "speaker.slash.fill")
-                    Text(audioEngine.isMonitoring ? "Monitor ON" : "Monitor OFF")
+                    Text(audioEngine.isMonitoring ? "Monitor" : "Monitor")
                 }
             }
             .toggleStyle(.button)
             .tint(audioEngine.isMonitoring ? .blue : .gray)
+            
+            // Tuner toggle
+            Toggle(isOn: $audioEngine.isTunerActive) {
+                HStack {
+                    Image(systemName: "tuningfork")
+                    Text("Tuner")
+                }
+            }
+            .toggleStyle(.button)
+            .tint(audioEngine.isTunerActive ? .purple : .gray)
             
             Divider()
                 .frame(height: 24)
@@ -206,38 +216,14 @@ struct AudioIOView: View {
     // MARK: - Meters Panel
     
     private var metersPanel: some View {
-        HStack(spacing: 24) {
-            // Input meter
-            VStack(spacing: 8) {
-                LevelMeter(level: audioEngine.inputLevel, label: "IN")
-                
-                // Input gain
-                VStack(spacing: 2) {
-                    Text("Gain")
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
-                    Slider(value: $audioEngine.inputGain, in: 0...2)
-                        .frame(width: 60)
-                    Text("\(Int(audioEngine.inputGain * 100))%")
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
-                }
-            }
-            
-            // Output meter
-            VStack(spacing: 8) {
-                LevelMeter(level: audioEngine.outputLevel, label: "OUT")
-                
-                // Output gain
-                VStack(spacing: 2) {
-                    Text("Gain")
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
-                    Slider(value: $audioEngine.outputGain, in: 0...2)
-                        .frame(width: 60)
-                    Text("\(Int(audioEngine.outputGain * 100))%")
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
+        VStack(spacing: 12) {
+            if audioEngine.isTunerActive {
+                TunerView()
+                    .frame(height: 140)
+            } else {
+                HStack(spacing: 20) {
+                    LevelMeter(level: audioEngine.inputLevel, label: "INPUT")
+                    LevelMeter(level: audioEngine.outputLevel, label: "OUTPUT")
                 }
             }
         }

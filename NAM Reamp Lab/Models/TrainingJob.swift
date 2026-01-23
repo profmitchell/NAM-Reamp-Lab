@@ -114,11 +114,44 @@ struct TrainingJob: Identifiable, Codable, Equatable {
     }
 }
 
+/// NAM model architecture types
+enum ModelArchitecture: String, Codable, CaseIterable {
+    case wavenet = "WaveNet"
+    case lstm = "LSTM"
+    case convnet = "ConvNet"
+    
+    var description: String {
+        switch self {
+        case .wavenet: return "WaveNet - Best quality, moderate speed"
+        case .lstm: return "LSTM - Good quality, faster"
+        case .convnet: return "ConvNet - Fast training, good for simpler tones"
+        }
+    }
+}
+
+/// NAM training size presets
+enum TrainingPreset: String, Codable, CaseIterable {
+    case feather = "Feather"
+    case nano = "Nano"
+    case lite = "Lite"
+    case full = "Full"
+    
+    var description: String {
+        switch self {
+        case .feather: return "Feather - Smallest/Fastest (8 layers, 4 channels)"
+        case .nano: return "Nano - Very Efficient (8 layers, 8 channels)"
+        case .lite: return "Lite - Balanced (10 layers, 8 channels)"
+        case .full: return "Full - Best Quality (10 layers, 16 channels)"
+        }
+    }
+}
+
 // MARK: - Training Parameters
 
 /// Parameters for NAM model training
 struct TrainingParameters: Codable {
     var architecture: ModelArchitecture
+    var preset: TrainingPreset? = .full
     var epochs: Int
     var learningRate: Double
     var batchSize: Int
@@ -131,6 +164,7 @@ struct TrainingParameters: Codable {
     
     init(
         architecture: ModelArchitecture = .wavenet,
+        preset: TrainingPreset = .full,
         epochs: Int = 50,  // Reduced from 100 - early stopping will kick in if quality is good
         learningRate: Double = 0.004,
         batchSize: Int = 16,
@@ -140,6 +174,7 @@ struct TrainingParameters: Codable {
         thresholdESR: Double? = 0.02  // Stop early if ESR < 2%
     ) {
         self.architecture = architecture
+        self.preset = preset
         self.epochs = epochs
         self.learningRate = learningRate
         self.batchSize = batchSize
@@ -162,21 +197,6 @@ struct TrainingParameters: Codable {
         patience: 50,
         thresholdESR: 0.01  // 1% - highest quality
     )
-}
-
-/// NAM model architecture types
-enum ModelArchitecture: String, Codable, CaseIterable {
-    case wavenet = "WaveNet"
-    case lstm = "LSTM"
-    case convnet = "ConvNet"
-    
-    var description: String {
-        switch self {
-        case .wavenet: return "WaveNet - Best quality, moderate speed"
-        case .lstm: return "LSTM - Good quality, faster"
-        case .convnet: return "ConvNet - Fast training, good for simpler tones"
-        }
-    }
 }
 
 // MARK: - Sample Data for Previews

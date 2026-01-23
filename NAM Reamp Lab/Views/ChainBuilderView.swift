@@ -715,6 +715,8 @@ struct PluginRowView: View {
     
     @StateObject private var audioEngine = AudioEngine.shared
     @State private var showingPluginUI = false
+    @State private var isEditingNickname = false
+    @State private var editedNickname = ""
     
     var body: some View {
         HStack(spacing: 12) {
@@ -732,9 +734,31 @@ struct PluginRowView: View {
             
             // Plugin info
             VStack(alignment: .leading, spacing: 2) {
-                Text(plugin.name)
-                    .fontWeight(.medium)
-                    .strikethrough(plugin.isBypassed)
+                HStack(spacing: 8) {
+                    if isEditingNickname {
+                        TextField("Nickname", text: $editedNickname, onCommit: {
+                            updateNickname()
+                        })
+                        .textFieldStyle(.roundedBorder)
+                        .controlSize(.small)
+                        .frame(width: 150)
+                    } else {
+                        Text(plugin.nickname ?? plugin.name)
+                            .fontWeight(.medium)
+                            .strikethrough(plugin.isBypassed)
+                            .onTapGesture(count: 2) {
+                                editedNickname = plugin.nickname ?? plugin.name
+                                isEditingNickname = true
+                            }
+                        
+                        if plugin.nickname != nil {
+                            Text("(\(plugin.name))")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                                .italic()
+                        }
+                    }
+                }
                 
                 HStack(spacing: 8) {
                     Text(plugin.type.rawValue)
@@ -795,6 +819,13 @@ struct PluginRowView: View {
         }
     }
     
+    private func updateNickname() {
+        isEditingNickname = false
+        if let chain = ChainManager.shared.selectedChain {
+            ChainManager.shared.updatePluginNickname(plugin, in: chain, nickname: editedNickname.isEmpty ? nil : editedNickname)
+        }
+    }
+    
     private var iconColor: Color {
         switch plugin.type {
         case .nam: return .purple
@@ -835,6 +866,10 @@ struct AddPluginSheet: View {
     @State private var showingFilePicker = false
     @State private var filePickerType: PluginType = .nam
     
+    // Keyboard navigation
+    @State private var selectedIndex: Int?
+    @FocusState private var isSearchFocused: Bool
+    
     var body: some View {
         VStack(spacing: 0) {
             // Header
@@ -864,6 +899,10 @@ struct AddPluginSheet: View {
             TextField("Search...", text: $searchText)
                 .textFieldStyle(.roundedBorder)
                 .padding(.horizontal)
+                .focused($isSearchFocused)
+                .onSubmit {
+                    handleEnter()
+                }
             
             // Content
             Group {
@@ -879,11 +918,56 @@ struct AddPluginSheet: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(
+                // Capture arrow keys
+                KeyEventView { event in
+                    handleKeyEvent(event)
+                }
+                .frame(width: 0, height: 0)
+            )
         }
         .frame(width: 500, height: 500)
+        .onAppear {
+            isSearchFocused = true
+        }
+        .onChange(of: searchText) { old, new in
+            selectedIndex = nil
+        }
         .task {
             if audioUnitManager.availableAudioUnits.isEmpty {
                 await audioUnitManager.scanForAudioUnits()
+            }
+        }
+    }
+    
+    private func handleEnter() {
+        let results = filteredAudioUnits
+        if results.isEmpty { return }
+        
+        if let current = selectedIndex {
+            // Third enter (confirm load)
+            if current >= 0 && current < results.count {
+                addAudioUnit(results[current])
+            }
+        } else {
+            // Second enter (jump to first result)
+            selectedIndex = 0
+        }
+    }
+    
+    private func handleKeyEvent(_ event: NSEvent) {
+        let results = filteredAudioUnits
+        if results.isEmpty { return }
+        
+        if event.keyCode == 125 { // Down arrow
+            if let current = selectedIndex {
+                selectedIndex = min(current + 1, results.count - 1)
+            } else {
+                selectedIndex = 0
+            }
+        } else if event.keyCode == 126 { // Up arrow
+            if let current = selectedIndex {
+                selectedIndex = max(current - 1, 0)
             }
         }
     }
@@ -946,26 +1030,36 @@ struct AddPluginSheet: View {
     }
     
     private var audioUnitsList: some View {
-        List {
-            ForEach(filteredAudioUnits) { au in
-                Button {
-                    addAudioUnit(au)
-                } label: {
-                    HStack {
-                        Image(systemName: au.icon)
-                            .foregroundColor(.blue)
-                        VStack(alignment: .leading) {
-                            Text(au.name)
-                            Text(au.manufacturer)
-                                .font(.caption)
-                                .foregroundColor(.secondary)
+        ScrollViewReader { proxy in
+            List(selection: $selectedIndex) {
+                let results = filteredAudioUnits
+                ForEach(Array(results.enumerated()), id: \.offset) { index, au in
+                    Button {
+                        addAudioUnit(au)
+                    } label: {
+                        HStack {
+                            Image(systemName: au.icon)
+                                .foregroundColor(.blue)
+                            VStack(alignment: .leading) {
+                                Text(au.name)
+                                Text(au.manufacturer)
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            Spacer()
+                            Image(systemName: "plus.circle")
+                                .foregroundColor(.accentColor)
                         }
-                        Spacer()
-                        Image(systemName: "plus.circle")
-                            .foregroundColor(.accentColor)
                     }
+                    .buttonStyle(.plain)
+                    .listRowBackground(selectedIndex == index ? Color.accentColor.opacity(0.2) : Color.clear)
+                    .id(index)
                 }
-                .buttonStyle(.plain)
+            }
+            .onChange(of: selectedIndex) { old, new in
+                if let new = new {
+                    proxy.scrollTo(new)
+                }
             }
         }
     }
@@ -1061,6 +1155,29 @@ struct AddPluginSheet: View {
             componentDescription: AudioComponentDescriptionCodable(from: info.componentDescription)
         )
         chainManager.addPlugin(plugin, to: chain)
+    }
+}
+
+/// Helper view to capture global key events in a window
+struct KeyEventView: NSViewRepresentable {
+    let onKeyEvent: (NSEvent) -> Void
+    
+    func makeNSView(context: Context) -> NSView {
+        let view = KeyEventNSView()
+        view.onKeyEvent = onKeyEvent
+        return view
+    }
+    
+    func updateNSView(_ nsView: NSView, context: Context) {}
+    
+    class KeyEventNSView: NSView {
+        var onKeyEvent: ((NSEvent) -> Void)?
+        
+        override var acceptsFirstResponder: Bool { true }
+        
+        override func keyDown(with event: NSEvent) {
+            onKeyEvent?(event)
+        }
     }
 }
 

@@ -66,6 +66,20 @@ class AudioEngine: ObservableObject {
     @Published var bufferSize: Int = 256
     @Published var sampleRate: Double = 48000
     
+    // Tuner Properties
+    @Published var isTunerActive: Bool = false {
+        didSet {
+            if isTunerActive {
+                startTuner()
+            } else {
+                stopTuner()
+            }
+        }
+    }
+    @Published private(set) var tunerNote: String = "--"
+    @Published private(set) var tunerCentsOff: Double = 0
+    @Published private(set) var tunerFrequency: Double = 0
+    
     // Loaded Audio Units in the chain
     @Published private(set) var loadedAudioUnits: [AVAudioUnit] = []
     @Published private(set) var currentChain: ProcessingChain?
@@ -353,16 +367,14 @@ class AudioEngine: ObservableObject {
     /// Restores state to a loaded Audio Unit at the specified index
     func restorePluginState(at index: Int, from data: Data) {
         guard index < effectNodes.count else { return }
-        
-        let unit = effectNodes[index]
+        let audioUnit = effectNodes[index]
         
         do {
             if let state = try NSKeyedUnarchiver.unarchivedObject(ofClasses: [NSDictionary.self, NSString.self, NSNumber.self, NSData.self, NSArray.self], from: data) as? [String: Any] {
-                unit.auAudioUnit.fullState = state
-                print("Restored state for plugin \(index): \(unit.name)")
+                audioUnit.auAudioUnit.fullState = state
             }
         } catch {
-            print("Failed to restore state for plugin \(index): \(error)")
+            print("Error restoring plugin state: \(error)")
         }
     }
     
@@ -914,6 +926,88 @@ class AudioEngine: ObservableObject {
         print("   Output volume: \(mixer.outputVolume)")
     }
     
+    // MARK: - Tuner Implementation
+    
+    private var tunerAudioFormat: AVAudioFormat?
+    private let tunerBufferSize: AVAudioFrameCount = 4096
+    
+    private func startTuner() {
+        guard let engine = engine, let inputNode = engine.inputNode as? AVAudioNode else { return }
+        
+        // Remove existing tap if any
+        inputNode.removeTap(onBus: 0)
+        
+        let format = inputNode.inputFormat(forBus: 0)
+        tunerAudioFormat = format
+        
+        inputNode.installTap(onBus: 0, bufferSize: tunerBufferSize, format: format) { [weak self] buffer, time in
+            self?.processTunerBuffer(buffer)
+        }
+    }
+    
+    private func stopTuner() {
+        engine?.inputNode.removeTap(onBus: 0)
+        Task { @MainActor in
+            self.tunerNote = "--"
+            self.tunerFrequency = 0
+            self.tunerCentsOff = 0
+        }
+    }
+    
+    private func processTunerBuffer(_ buffer: AVAudioPCMBuffer) {
+        guard let data = buffer.floatChannelData?[0] else { return }
+        let frameCount = Int(buffer.frameLength)
+        
+        // Very basic autocorrelation for pitch detection
+        var maxCorr: Float = 0
+        var bestLag: Int = -1
+        
+        let minFreq: Float = 60.0    // Low E is ~82Hz
+        let maxFreq: Float = 1000.0  // High E is ~330Hz, but harmonics...
+        
+        let minLag = Int(Float(buffer.format.sampleRate) / maxFreq)
+        let maxLag = Int(Float(buffer.format.sampleRate) / minFreq)
+        
+        for lag in minLag...maxLag {
+            var corr: Float = 0
+            for i in 0..<(frameCount - lag) {
+                corr += data[i] * data[i + lag]
+            }
+            if corr > maxCorr {
+                maxCorr = corr
+                bestLag = lag
+            }
+        }
+        
+        if bestLag > 0 {
+            let frequency = buffer.format.sampleRate / Double(bestLag)
+            
+            // Note calculation
+            let (note, cents) = frequencyToNote(frequency)
+            
+            Task { @MainActor in
+                self.tunerFrequency = frequency
+                self.tunerNote = note
+                self.tunerCentsOff = cents
+            }
+        }
+    }
+    
+    private func frequencyToNote(_ freq: Double) -> (String, Double) {
+        if freq <= 0 { return ("--", 0) }
+        
+        let notes = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
+        let a4 = 440.0
+        let h = 12.0 * log2(freq / a4) + 69.0
+        let noteNum = Int(round(h))
+        let cents = 100.0 * (h - Double(noteNum))
+        
+        let noteName = notes[noteNum % 12]
+        let octave = (noteNum / 12) - 1
+        
+        return ("\(noteName)\(octave)", cents)
+    }
+    
     /// Installs audio taps on input and output for real RMS level metering
     private func installLevelMetering() {
         guard let inputNode = inputNode, let mixer = mainMixerNode else { return }
@@ -929,12 +1023,8 @@ class AudioEngine: ObservableObject {
         }
         
         // Remove existing taps if any (safe to call even if no tap exists)
-        do {
-            inputNode.removeTap(onBus: 0)
-        } catch { }
-        do {
-            mixer.removeTap(onBus: 0)
-        } catch { }
+        inputNode.removeTap(onBus: 0)
+        mixer.removeTap(onBus: 0)
         
         // Input level tap - measures signal coming from the audio interface
         inputNode.installTap(onBus: 0, bufferSize: 1024, format: inputFormat) { [weak self] buffer, _ in
@@ -963,10 +1053,6 @@ class AudioEngine: ObservableObject {
                 guard let self = self else { return }
                 let level = self.calculateRMSLevel(buffer: buffer)
                 
-                // Throttle - use same lastLevelUpdateTime as input (they're synced)
-                let now = CFAbsoluteTimeGetCurrent()
-                guard now - self.lastLevelUpdateTime < 0.1 else { return } // Only update if input just updated
-                
                 self.outputLevelRMS = self.outputLevelRMS * (1 - self.levelSmoothingFactor) + level * self.levelSmoothingFactor
                 
                 Task { @MainActor [weak self] in
@@ -975,8 +1061,6 @@ class AudioEngine: ObservableObject {
                 }
             }
         }
-        
-        print("Level metering installed - Input: \(inputFormat.sampleRate)Hz, Output: \(outputFormat.sampleRate)Hz")
     }
     
     /// Calculates RMS (Root Mean Square) level from an audio buffer
@@ -1007,8 +1091,6 @@ class AudioEngine: ObservableObject {
         let averageRMS = totalRMS / Float(channelCount)
         
         // Convert to a more usable 0-1 range with some headroom
-        // Typical audio RMS is around 0.1-0.3 for normal signals
-        // Clamp to 0-1 range with appropriate scaling
         let scaledLevel = min(1.0, averageRMS * 2.5)
         
         return scaledLevel
@@ -1023,8 +1105,7 @@ class AudioEngine: ObservableObject {
     }
     
     private func startLevelMetering() {
-        // Level metering is now handled by audio taps installed in rebuildAudioChain
-        // This method is kept for compatibility but taps are installed during chain rebuild
+        installLevelMetering()
     }
     
     private func stopLevelMetering() {
@@ -1058,18 +1139,12 @@ enum AudioEngineError: LocalizedError {
     
     var errorDescription: String? {
         switch self {
-        case .engineNotInitialized:
-            return "Audio engine not initialized"
-        case .deviceConfigurationFailed:
-            return "Failed to configure audio device"
-        case .audioUnitLoadFailed:
-            return "Failed to load Audio Unit"
-        case .fileNotFound(let path):
-            return "File not found: \(path)"
-        case .chainLoadFailed(let reason):
-            return "Failed to load chain: \(reason)"
-        case .microphonePermissionDenied:
-            return "Microphone permission denied. Please grant access in System Preferences > Security & Privacy > Microphone"
+        case .engineNotInitialized: return "Audio engine not initialized"
+        case .deviceConfigurationFailed: return "Failed to configure audio device"
+        case .audioUnitLoadFailed: return "Failed to load Audio Unit"
+        case .fileNotFound(let path): return "File not found: \(path)"
+        case .chainLoadFailed(let reason): return "Failed to load chain: \(reason)"
+        case .microphonePermissionDenied: return "Microphone permission denied"
         }
     }
 }

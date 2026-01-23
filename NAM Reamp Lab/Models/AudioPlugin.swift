@@ -31,6 +31,7 @@ struct AudioPlugin: Identifiable, Codable, Equatable {
     var path: String? // File path for NAM models and IRs
     var componentDescription: AudioComponentDescriptionCodable? // For Audio Units
     var presetData: Data? // Saved AU preset state
+    var nickname: String? // Optional nickname for the plugin
     var isEnabled: Bool
     var isBypassed: Bool
     
@@ -41,6 +42,7 @@ struct AudioPlugin: Identifiable, Codable, Equatable {
         path: String? = nil,
         componentDescription: AudioComponentDescriptionCodable? = nil,
         presetData: Data? = nil,
+        nickname: String? = nil,
         isEnabled: Bool = true,
         isBypassed: Bool = false
     ) {
@@ -50,6 +52,7 @@ struct AudioPlugin: Identifiable, Codable, Equatable {
         self.path = path
         self.componentDescription = componentDescription
         self.presetData = presetData
+        self.nickname = nickname
         self.isEnabled = isEnabled
         self.isBypassed = isBypassed
     }

@@ -686,7 +686,7 @@ struct ESRStatView: View {
 struct TrainingParametersSheet: View {
     @Binding var parameters: TrainingParameters
     @Environment(\.dismiss) private var dismiss
-    @StateObject private var pythonManager = PythonManager.shared
+    @ObservedObject private var pythonManager = PythonManager.shared
     
     var body: some View {
         VStack(spacing: 0) {
@@ -699,28 +699,39 @@ struct TrainingParametersSheet: View {
                 Button("Done") {
                     dismiss()
                 }
+                .keyboardShortcut(.defaultAction)
             }
             .padding()
             
             Divider()
             
             Form {
-                // Architecture
-                Section("Model Architecture") {
+                Section("Model Configuration") {
                     Picker("Architecture", selection: $parameters.architecture) {
                         ForEach(ModelArchitecture.allCases, id: \.self) { arch in
                             Text(arch.rawValue).tag(arch)
                         }
                     }
-                    .pickerStyle(.segmented)
                     
-                    Text(parameters.architecture.description)
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+                    if parameters.architecture == .wavenet {
+                        Picker("Size Preset", selection: Binding(
+                            get: { parameters.preset ?? .full },
+                            set: { parameters.preset = $0 }
+                        )) {
+                            ForEach(TrainingPreset.allCases, id: \.self) { preset in
+                                VStack(alignment: .leading) {
+                                    Text(preset.rawValue)
+                                    Text(preset.description)
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+                                .tag(preset)
+                            }
+                        }
+                    }
                 }
                 
-                // Training settings
-                Section("Training Settings") {
+                Section("Training Hyperparameters") {
                     HStack {
                         Text("Epochs")
                         Spacer()

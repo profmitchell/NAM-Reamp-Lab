@@ -203,6 +203,25 @@ class NAMTrainer: ObservableObject {
         let configDir = "\(trainingRunDir)/configs"
         try FileManager.default.createDirectory(atPath: configDir, withIntermediateDirectories: true)
         
+        // Determine WaveNet parameters based on preset
+        let channels: Int
+        let dilations: [Int]
+        
+        switch parameters.preset ?? .full {
+        case .feather:
+            channels = 4
+            dilations = [1, 2, 4, 8, 16, 32, 64, 128]
+        case .nano:
+            channels = 8
+            dilations = [1, 2, 4, 8, 16, 32, 64, 128]
+        case .lite:
+            channels = 8
+            dilations = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512]
+        case .full:
+            channels = 16
+            dilations = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512]
+        }
+        
         // Data config
         let dataConfig = """
         {
@@ -225,7 +244,8 @@ class NAMTrainer: ObservableObject {
         """
         try dataConfig.write(toFile: "\(configDir)/data.json", atomically: true, encoding: .utf8)
         
-        // Model config (WaveNet standard)
+        // Model config (WaveNet based on preset)
+        let dilationsStr = dilations.map { String($0) }.joined(separator: ", ")
         let modelConfig = """
         {
             "net": {
@@ -235,21 +255,21 @@ class NAMTrainer: ObservableObject {
                         {
                             "condition_size": 1,
                             "input_size": 1,
-                            "channels": 16,
+                            "channels": \(channels),
                             "head_size": 8,
                             "kernel_size": 3,
-                            "dilations": [1, 2, 4, 8, 16, 32, 64, 128, 256, 512],
+                            "dilations": [\(dilationsStr)],
                             "activation": "Tanh",
                             "gated": false,
                             "head_bias": false
                         },
                         {
                             "condition_size": 1,
-                            "input_size": 16,
-                            "channels": 8,
+                            "input_size": \(channels),
+                            "channels": \(max(1, channels/2)),
                             "head_size": 1,
-                            "kernel_size": 3,
-                            "dilations": [1, 2, 4, 8, 16, 32, 64, 128, 256, 512],
+                            "kernel_size": 1,
+                            "dilations": [1],
                             "activation": "Tanh",
                             "gated": false,
                             "head_bias": true
