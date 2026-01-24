@@ -5,7 +5,7 @@
 //  Created by Mitchell Cohen on 1/23/26.
 //
 
-import AVFoundation
+@preconcurrency import AVFoundation
 import AppKit
 import Combine
 import CoreAudioKit
@@ -147,20 +147,38 @@ class AudioPluginManager: ObservableObject {
     loadedAudioUnits = effectNodes  // Keep in sync
   }
 
-  /// Captures the current state of all loaded Audio Units
-  func capturePluginStates() -> [Int: Data] {
-    var states: [Int: Data] = [:]
+  /// Captures the current state and preset names of all loaded Audio Units
+  func capturePluginStates() -> [Int: (data: Data?, presetName: String?)] {
+    var states: [Int: (data: Data?, presetName: String?)] = [:]
 
     for (index, unit) in effectNodes.enumerated() {
+      var presetName: String?
+      var capturedData: Data?
+
+      // 1. Capture preset name
+      if unit.auAudioUnit.componentDescription.componentManufacturer == FourCharCode("SdAk") {
+        // NAM - extract from state or current file
+        if let fullState = unit.auAudioUnit.fullState,
+          let path = (fullState["modelPath"] as? String) ?? (fullState["NAMModelPath"] as? String)
+        {
+          presetName = URL(fileURLWithPath: path).deletingPathExtension().lastPathComponent
+        }
+      } else {
+        // Standard AU
+        presetName = unit.auAudioUnit.currentPreset?.name
+      }
+
+      // 2. Capture full state data
       if let fullState = unit.auAudioUnit.fullState {
         do {
-          let data = try NSKeyedArchiver.archivedData(
+          capturedData = try NSKeyedArchiver.archivedData(
             withRootObject: fullState, requiringSecureCoding: false)
-          states[index] = data
         } catch {
           print("Failed to capture state for plugin \(index): \(error)")
         }
       }
+
+      states[index] = (data: capturedData, presetName: presetName)
     }
 
     return states

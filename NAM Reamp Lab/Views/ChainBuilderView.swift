@@ -58,7 +58,14 @@ struct ChainBuilderView: View {
     .sheet(isPresented: $showingAddPluginSheet) {
       AddPluginSheet(chain: chainManager.selectedChain)
     }
-    .sheet(isPresented: $showingPluginUI) {
+    .sheet(
+      isPresented: $showingPluginUI,
+      onDismiss: {
+        // Capture state immediately when user closes plugin UI
+        chainManager.captureCurrentChainState()
+        chainManager.saveChains()
+      }
+    ) {
       if let index = selectedPluginIndex,
         index < audioEngine.loadedAudioUnits.count,
         let chain = chainManager.selectedChain,

@@ -43,7 +43,10 @@ class AudioDeviceManager: ObservableObject {
 
   #if os(macOS)
     /// Configures the selected devices on the system and potentially on an AVAudioEngine
-    func configureDevices(for engine: AVAudioEngine?) throws {
+  func configureDevices(for engine: AVAudioEngine?) throws {
+      refreshDevices()
+      normalizeSelectedDevices()
+
       let inputID = selectedInputDevice?.id
       let outputID = selectedOutputDevice?.id
 
@@ -94,6 +97,54 @@ class AudioDeviceManager: ObservableObject {
           }
         }
       }
+    }
+
+    private func normalizeSelectedDevices() {
+      if let resolvedInput = resolveDeviceSelection(
+        current: selectedInputDevice,
+        devices: inputDevices,
+        defaultID: getDefaultInputDeviceID()
+      ) {
+        if resolvedInput != selectedInputDevice {
+          selectedInputDevice = resolvedInput
+        }
+      } else {
+        selectedInputDevice = nil
+      }
+
+      if let resolvedOutput = resolveDeviceSelection(
+        current: selectedOutputDevice,
+        devices: outputDevices,
+        defaultID: getDefaultOutputDeviceID()
+      ) {
+        if resolvedOutput != selectedOutputDevice {
+          selectedOutputDevice = resolvedOutput
+        }
+      } else {
+        selectedOutputDevice = nil
+      }
+    }
+
+    private func resolveDeviceSelection(
+      current: AudioDeviceInfo?,
+      devices: [AudioDeviceInfo],
+      defaultID: AudioDeviceID?
+    ) -> AudioDeviceInfo? {
+      if let current = current {
+        if let match = devices.first(where: { $0.id == current.id }) {
+          return match
+        }
+        if let match = devices.first(where: { $0.uid == current.uid }) {
+          return match
+        }
+      }
+
+      if let defaultID = defaultID,
+         let match = devices.first(where: { $0.id == defaultID }) {
+        return match
+      }
+
+      return devices.first
     }
 
     /// Sets the audio device directly on an AudioUnit
@@ -158,6 +209,48 @@ class AudioDeviceManager: ObservableObject {
       if status != noErr {
         throw AudioEngineError.deviceConfigurationFailed
       }
+    }
+
+    func getDefaultInputDeviceID() -> AudioDeviceID? {
+      var deviceID = AudioDeviceID(0)
+      var dataSize = UInt32(MemoryLayout<AudioDeviceID>.size)
+      var propertyAddress = AudioObjectPropertyAddress(
+        mSelector: kAudioHardwarePropertyDefaultInputDevice,
+        mScope: kAudioObjectPropertyScopeGlobal,
+        mElement: kAudioObjectPropertyElementMain
+      )
+
+      let status = AudioObjectGetPropertyData(
+        AudioObjectID(kAudioObjectSystemObject),
+        &propertyAddress,
+        0,
+        nil,
+        &dataSize,
+        &deviceID
+      )
+
+      return status == noErr && deviceID != 0 ? deviceID : nil
+    }
+
+    func getDefaultOutputDeviceID() -> AudioDeviceID? {
+      var deviceID = AudioDeviceID(0)
+      var dataSize = UInt32(MemoryLayout<AudioDeviceID>.size)
+      var propertyAddress = AudioObjectPropertyAddress(
+        mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+        mScope: kAudioObjectPropertyScopeGlobal,
+        mElement: kAudioObjectPropertyElementMain
+      )
+
+      let status = AudioObjectGetPropertyData(
+        AudioObjectID(kAudioObjectSystemObject),
+        &propertyAddress,
+        0,
+        nil,
+        &dataSize,
+        &deviceID
+      )
+
+      return status == noErr && deviceID != 0 ? deviceID : nil
     }
 
     func getAudioDevices(isInput: Bool) -> [AudioDeviceInfo] {

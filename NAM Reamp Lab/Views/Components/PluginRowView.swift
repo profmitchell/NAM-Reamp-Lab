@@ -151,9 +151,9 @@ struct PluginRowView: View {
     private func showPluginUI() {
         // Show the Audio Unit UI in a floating window
         Task {
-            guard index < audioEngine.loadedAudioUnits.count else { return }
-            
-            if let viewController = await audioEngine.getAudioUnitViewController(at: index) {
+            guard let effectIndex = effectIndexForPlugin() else { return }
+
+            if let viewController = await audioEngine.getAudioUnitViewController(at: effectIndex) {
                 await MainActor.run {
                     let window = NSWindow(contentViewController: viewController)
                     window.title = plugin.name
@@ -164,5 +164,20 @@ struct PluginRowView: View {
                 }
             }
         }
+    }
+
+    private func effectIndexForPlugin() -> Int? {
+        guard let chain = ChainManager.shared.selectedChain else { return nil }
+
+        var effectIndex = 0
+        for chainPlugin in chain.plugins {
+            if chainPlugin.id == plugin.id {
+                return chainPlugin.isEnabled && !chainPlugin.isBypassed ? effectIndex : nil
+            }
+            if chainPlugin.isEnabled && !chainPlugin.isBypassed {
+                effectIndex += 1
+            }
+        }
+        return nil
     }
 }

@@ -87,7 +87,8 @@ extension AudioEngine {
     for i in 0..<chain.plugins.count {
       if chain.plugins[i].isEnabled && !chain.plugins[i].isBypassed {
         if let stateData = states[pluginIndex] {
-          chain.plugins[i].presetData = stateData
+          chain.plugins[i].presetData = stateData.data
+          chain.plugins[i].currentPresetName = stateData.presetName
         }
         pluginIndex += 1
       }
@@ -99,6 +100,8 @@ extension AudioEngine {
 
   /// Clears all effects from the chain
   func clearEffects() {
+    // Capture state before clearing!
+    _ = updateChainWithPluginStates()
     AudioPluginManager.shared.clearEffects(engine: engine)
     currentChain = nil
   }
@@ -135,7 +138,9 @@ extension AudioEngine {
     // 1. INPUT STAGE: Hardware -> Input Selector
     // We use the node's output format directly to ensure compatibility.
     let hardwareFormat = inputNode.outputFormat(forBus: 0)
-    let hasValidHardware = hardwareFormat.sampleRate > 0 && hardwareFormat.channelCount > 0
+    let hasValidHardware =
+      hardwareFormat.sampleRate > 0 && !hardwareFormat.sampleRate.isNaN
+      && hardwareFormat.channelCount > 0
 
     if hasValidHardware {
       // CHANNEL SELECTION: Map one hardware channel to the engine
@@ -144,9 +149,10 @@ extension AudioEngine {
       // the value is the input (hardware) channel.
 
       // We map the selected hardware channel to output channel 0
-      let map = [NSNumber(value: inputChannelIndex)]
+      let safeChannelIndex = min(inputChannelIndex, max(availableInputChannels.count, 1) - 1)
+      let map = [NSNumber(value: safeChannelIndex)]
       inputNode.auAudioUnit.channelMap = map
-      print("🎸 Mapping hardware input channel \(inputChannelIndex + 1) to engine output 0")
+      print("🎸 Mapping hardware input channel \(safeChannelIndex + 1) to engine output 0")
 
       // Use a MONO format for the selection bridge to minimize processing
       let monoFormat = AVAudioFormat(
